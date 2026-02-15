@@ -1,0 +1,29 @@
+# Prefect deployment configuration
+# This file defines how to deploy your flows to the Prefect server
+
+name: infotennis-v2
+prefect-version: 3.6.11
+
+# Pull step: specify where the code lives
+pull:
+  - prefect.deployments.steps.set_working_directory:
+      directory: .
+
+# Build step: no special build needed for Python
+build: null
+
+# Push step: no artifacts to push
+push: null
+
+# Deployments
+deployments:
+  - name: atp-results-archive-daily
+    version: null
+    tags: ["tennis", "atp", "daily"]
+    description: "Daily ATP Results Archive scraping pipeline"
+    entrypoint: flows/atp_main_flow.py:atp_results_archive_flow
+    parameters: {}
+    work_pool:
+      name: default-agent-pool
+      work_queue_name: default
+    schedule: null

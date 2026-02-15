@@ -1,0 +1,7 @@
+prefect
+boto3
+tenacity
+duckdb
+s3fs
+pyyaml
+python-dotenv

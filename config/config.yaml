@@ -1,0 +1,26 @@
+# infotennis_v2 Configuration
+# Non-sensitive settings for the cloud ELT pipeline
+
+# ATP API Configuration
+atp_root_url: "https://www.atptour.com"
+atp_results_archive_path: "/en/scores/results-archive"
+
+# S3 Storage Configuration
+s3:
+  # Base path template for raw data
+  # Format: raw/{endpoint_name}/year={YYYY}/month={MM}/{timestamp}.json
+  raw_prefix: "raw"
+  timestamp_format: "%Y%m%d_%H%M%S"
+
+# MotherDuck Configuration
+motherduck:
+  # Table naming pattern
+  raw_table_prefix: "raw_"
+  # Metadata table for tracking loaded files
+  loaded_files_table: "_loaded_files"
+
+# Endpoint Configurations
+endpoints:
+  atp_results_archive:
+    description: "ATP Tournament Calendar and Results Archive"
+    table_name: "atp_results_archive"

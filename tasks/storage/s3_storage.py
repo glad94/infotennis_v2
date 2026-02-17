@@ -22,7 +22,8 @@ def get_s3_client():
 
 def get_bucket_name() -> str:
     """Get S3 bucket name from env var or use default."""
-    return os.getenv("S3_BUCKET", "infotennis-v2")
+    bucket = os.getenv("S3_BUCKET", "infotennis-v2")
+    return bucket.replace("s3://", "").strip("/")
 
 
 def generate_s3_key(endpoint_name: str, timestamp: datetime = None) -> str:
@@ -41,48 +42,41 @@ def generate_s3_key(endpoint_name: str, timestamp: datetime = None) -> str:
     return f"raw/{endpoint_name}/year={year}/month={month}/{ts_str}.json"
 
 
-@task(
-    name="upload_to_s3",
-    description="Upload JSON data to S3 with partitioned naming",
-    retries=3,
-    retry_delay_seconds=5,
-    log_prints=True
-)
-def upload_to_s3(data: dict, endpoint_name: str) -> str:
+def upload_json_to_s3(data: dict, bucket: str, key: str, metadata: dict = None) -> str:
     """
-    Upload JSON data to S3 with partitioned naming convention.
+    Utility function to upload JSON data to S3.
     
     Args:
         data: JSON-compatible Python dict to upload
-        endpoint_name: Name of the endpoint (e.g., 'atp_results_archive')
+        bucket: S3 bucket name
+        key: S3 key (path)
+        metadata: Optional metadata for the S3 object
         
     Returns:
-        S3 URI of the uploaded file (s3://{bucket}/{key})
+        S3 URI of the uploaded file
     """
     timestamp = datetime.now(timezone.utc)
-    s3_key = generate_s3_key(endpoint_name, timestamp)
-    bucket = get_bucket_name()
+    s3_client = get_s3_client()
     
     # Serialize data to JSON
     json_data = json.dumps(data, indent=2, default=str, ensure_ascii=False)
     
-    # Upload to S3
-    s3_client = get_s3_client()
+    # Prepare metadata
+    s3_metadata = metadata or {}
+    if "upload_timestamp" not in s3_metadata:
+        s3_metadata["upload_timestamp"] = timestamp.isoformat()
     
-    print(f"Uploading to s3://{bucket}/{s3_key}")
+    print(f"Uploading to s3://{bucket}/{key}")
     
     s3_client.put_object(
         Bucket=bucket,
-        Key=s3_key,
+        Key=key,
         Body=json_data.encode("utf-8"),
         ContentType="application/json",
-        Metadata={
-            "endpoint": endpoint_name,
-            "upload_timestamp": timestamp.isoformat(),
-        }
+        Metadata=s3_metadata
     )
     
-    s3_uri = f"s3://{bucket}/{s3_key}"
+    s3_uri = f"s3://{bucket}/{key}"
     print(f"✅ Successfully uploaded to {s3_uri}")
     
     return s3_uri

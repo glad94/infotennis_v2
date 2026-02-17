@@ -174,5 +174,24 @@ def get_atp_tournament_task(url: str, tournament_name: str, tournament_id: str, 
                 })
                 matches_data.append(match_dict)
     
-    logger.info(f"Successfully scraped {len(matches_data)} matches for {tournament_name} ({year}).")
-    return matches_data
+from tasks.storage.s3_storage import upload_json_to_s3, get_bucket_name
+
+@task(name="upload_atp_tournament_to_s3")
+def upload_atp_tournament_to_s3_task(data: list, tournament_id: str, year: int) -> str:
+    """
+    Upload ATP Tournament match data to S3.
+    """
+    timestamp = datetime.datetime.now(datetime.timezone.utc)
+    ts_str = timestamp.strftime("%Y%m%d_%H%M%S")
+    
+    bucket = get_bucket_name()
+    key = f"raw/atp_tournament/year={year}/tourn={tournament_id}/{ts_str}.json"
+    
+    metadata = {
+        "endpoint": "atp_tournament",
+        "tournament_id": str(tournament_id),
+        "year": str(year),
+        "count": str(len(data))
+    }
+    
+    return upload_json_to_s3(data, bucket, key, metadata)

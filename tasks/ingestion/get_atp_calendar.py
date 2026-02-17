@@ -141,5 +141,24 @@ def get_atp_results_archive_task(year: int = None):
         except Exception as e:
             logger.warning(f"Skipping a tournament due to parsing error: {e}")
             continue
-    logger.info(f"Successfully scraped {len(tournaments_data)} tournaments for {year}.")
-    return tournaments_data
+from tasks.storage.s3_storage import upload_json_to_s3, get_bucket_name
+
+@task(name="upload_atp_calendar_to_s3")
+def upload_atp_calendar_to_s3_task(data: list, year: int) -> str:
+    """
+    Upload ATP Calendar data to S3.
+    """
+    timestamp = datetime.datetime.now(datetime.timezone.utc)
+    month = timestamp.strftime("%m")
+    ts_str = timestamp.strftime("%Y%m%d_%H%M%S")
+    
+    bucket = get_bucket_name()
+    key = f"raw/atp_results_archive/year={year}/month={month}/{ts_str}.json"
+    
+    metadata = {
+        "endpoint": "atp_results_archive",
+        "year": str(year),
+        "count": str(len(data))
+    }
+    
+    return upload_json_to_s3(data, bucket, key, metadata)

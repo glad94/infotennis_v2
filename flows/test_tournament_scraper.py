@@ -5,9 +5,9 @@ from pathlib import Path
 # Add project root to sys.path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from tasks.ingestion.get_atp_tournament import get_atp_tournament_task
+from tasks.ingestion.get_atp_tournament import get_atp_tournament_task, upload_atp_tournament_to_s3_task
 
-@flow(name="Test Tournament Scraper")
+@flow(name="Test Tournament Scraper and S3 Upload")
 def test_tournament_flow():
     # Example: Adelaide International 2024
     # URL: https://www.atptour.com/en/scores/archive/adelaide/8998/2024/results
@@ -24,10 +24,12 @@ def test_tournament_flow():
         year=year
     )
     
-    print(f"Scraped {len(results)} matches.")
     if results:
-        print("\nSample match data:")
-        print(results[0])
+        print(f"Successfully scraped {len(results)} matches.")
+        s3_uri = upload_atp_tournament_to_s3_task(results, tournament_id, year)
+        print(f"Uploaded to S3: {s3_uri}")
+    else:
+        print("Failed to scrape tournament results.")
 
 if __name__ == "__main__":
     test_tournament_flow()

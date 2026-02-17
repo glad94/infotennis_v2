@@ -109,3 +109,54 @@ async def get_atp_match_data_task(year: int, tourn_id: str, match_id: str, data_
     except Exception as e:
         logger.error(f"Failed to get {data_type} for {year}/{tourn_id}/{match_id}: {e}")
         raise
+                
+from tasks.storage.s3_storage import upload_json_to_s3, get_bucket_name
+
+def get_round_short(round_n: str) -> str:
+    """
+    Abbreviate round names for file naming.
+    Ported from original infotennis project.
+    """
+    if "Round Of" in round_n:
+        return round_n.split(" ")[0][0] + round_n.split(" ")[-1]
+    elif "Round Qualifying" in round_n:
+        return "Q" + round_n.split(" ")[0][0]
+    elif "Round" in round_n:
+        return "".join([s[0] for s in round_n.split(" ")])
+    elif round_n in ["Quarterfinals", "Quarter-Finals"]:
+        return "QF"
+    elif round_n in ["Semifinals", "Semi-Finals"]:
+        return "SF"
+    elif round_n in ["Final", "Finals"]:
+        return "F"
+    return round_n
+
+@task(name="upload_atp_match_data_to_s3")
+def upload_atp_match_data_to_s3_task(data: dict, year: int, tourn_id: str, match_id: str, data_type: str, match_metadata: dict) -> str:
+    """
+    Upload ATP Match Data (stats or info) to S3 with custom naming.
+    """
+    # Normalize player names for filename
+    p1 = match_metadata.get("player1_name", "P1").replace(" ", "-")
+    p2 = match_metadata.get("player2_name", "P2").replace(" ", "-")
+    round_name = match_metadata.get("round", "R")
+    round_short = get_round_short(round_name)
+    match_id_upper = str(match_id).upper()
+    
+    bucket = get_bucket_name()
+    timestamp = datetime.datetime.now(datetime.timezone.utc)
+    
+    # Matching original project filename format:
+    # {tourn_id}_{round_short}_{player1}-vs-{player2}_{year}_{match_id}_{data_type}.json
+    filename = f"{tourn_id}_{round_short}_{p1}-vs-{p2}_{year}_{match_id_upper}_{data_type}.json"
+    key = f"raw/match-stats/year={year}/tourn={tourn_id}/{filename}"
+    
+    metadata = {
+        "endpoint": "match_stats",
+        "data_type": data_type,
+        "year": str(year),
+        "tournament_id": tourn_id,
+        "match_id": match_id_upper
+    }
+    
+    return upload_json_to_s3(data, bucket, key, metadata)

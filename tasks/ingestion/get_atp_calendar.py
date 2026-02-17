@@ -19,13 +19,13 @@ def get_random_user_agent():
     return random.choice(USER_AGENTS)
 
 def get_config():
-    config_path = os.path.join(os.path.dirname(__file__), '..', 'config', 'config.yaml')
+    config_path = os.path.join(os.path.dirname(__file__), '..', '..', 'config', 'config.yaml')
     with open(config_path, 'r') as f:
         return yaml.safe_load(f)
 
 @task
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
-def scrape_atp_results_archive_task(year: int = None):
+def get_atp_results_archive_task(year: int = None):
     """
     Scrape the ATP Results Archive for a specific year and return a list of tournament dicts.
     """
@@ -37,7 +37,7 @@ def scrape_atp_results_archive_task(year: int = None):
     url = f"{root_url}{archive_path}?year={year}"
     headers = {"User-Agent": get_random_user_agent()}
     import logging
-    logger = logging.getLogger("scrape_atp_results_archive_task")
+    logger = logging.getLogger("get_atp_results_archive_task")
     try:
         with httpx.Client(timeout=20) as client:
             resp = client.get(url, headers=headers)

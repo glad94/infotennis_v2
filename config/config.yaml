@@ -24,3 +24,13 @@ endpoints:
   atp_results_archive:
     description: "ATP Tournament Calendar and Results Archive"
     table_name: "atp_results_archive"
+  match_stats:
+    description: "Infosys Match Statistics (key-stats, rally-analysis, etc.)"
+    urls:
+      key-stats: "https://itp-atp-sls.infosys-platforms.com/static/prod/stats-plus/%(year)s/%(tourn_id)s/%(match_id)s/keystats.json"
+      rally-analysis: "https://itp-atp-sls.infosys-platforms.com/static/prod/stats-plus/%(year)s/%(tourn_id)s/%(match_id)s/rally-analysis.json"
+      stroke-analysis: "https://itp-atp-sls.infosys-platforms.com/static/prod/stats-plus/%(year)s/%(tourn_id)s/%(match_id)s/stroke-analysis.json"
+      court-vision: "https://itp-atp-sls.infosys-platforms.com/static/prod/stats-plus/%(year)s/%(tourn_id)s/%(match_id)s/courtvision.json"
+  match_info:
+    description: "ATP Hawkeye Match Info"
+    url_template: "https://www.atptour.com/-/Hawkeye/MatchStats/Complete/%(year)s/%(tourn_id)s/%(match_id)s"

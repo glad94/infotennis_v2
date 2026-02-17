@@ -22,45 +22,39 @@ import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from tasks.scrape_atp_calendar import scrape_atp_results_archive_task
-from tasks.s3_storage import upload_to_s3
-from tasks.motherduck_load import load_to_motherduck
+from tasks.ingestion.get_atp_calendar import get_atp_results_archive_task
+from tasks.storage.s3_storage import upload_to_s3
+from tasks.storage.motherduck_load import load_to_motherduck
 
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    format="%(asctime)s | %(levelname)-7s | %(name)s - %(message)s",
 )
 
 
 @flow(
     name="ATP Results Archive Pipeline",
-    description="Full ELT pipeline: Scrape ATP Results Archive → S3 → MotherDuck",
-    log_prints=True,
+    description="Monthly ETL to scrape ATP results and load into MotherDuck",
     retries=1,
-    retry_delay_seconds=60
+    retry_delay_seconds=30,
+    log_prints=True
 )
-def atp_results_archive_flow(year: Optional[int] = None) -> dict:
+def atp_results_archive_flow(year: Optional[int] = None):
     """
-    Complete ELT pipeline for ATP Results Archive data.
-    
-    Args:
-        year: Optional year to scrape. Defaults to current year.
-        
-    Returns:
-        Dictionary with pipeline results
+    Complete ELT flow for ATP Results Archive.
     """
     logger = get_run_logger()
     
     if year is None:
         year = datetime.now().year
     
-    print(f"{'='*60}")
-    print(f"ATP Results Archive Pipeline - Year {year}")
-    print(f"{'='*60}")
+    logger.info(f"{'='*60}")
+    logger.info(f"ATP Results Archive Pipeline - Year {year}")
+    logger.info(f"{'='*60}")
     
     # Step 1: Scrape
-    print("\n📥 Step 1: Scraping ATP Results Archive...")
-    tournaments = scrape_atp_results_archive_task(year=year)
+    logger.info("\n📥 Step 1: Scraping ATP Results Archive...")
+    tournaments = get_atp_results_archive_task(year=year)
     
     if not tournaments:
         logger.warning("No tournament data scraped")

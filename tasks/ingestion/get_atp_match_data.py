@@ -4,7 +4,7 @@ import json
 import logging
 import os
 import random
-from typing import Optional, Dict, Any
+from typing import Dict, Any
 
 import httpx
 import numpy as np
@@ -15,6 +15,11 @@ import cryptography.hazmat.primitives.ciphers
 import cryptography.hazmat.primitives.ciphers.algorithms
 import cryptography.hazmat.primitives.ciphers.modes
 import cryptography.hazmat.primitives.padding
+import sys
+from pathlib import Path
+# Add project root to sys.path for standalone execution
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+
 from prefect import task
 from tenacity import retry, stop_after_attempt, wait_exponential
 
@@ -27,7 +32,7 @@ def get_random_user_agent():
     return random.choice(USER_AGENTS)
 
 def get_config():
-    config_path = os.path.join(os.path.dirname(__file__), '..', '..', 'config', 'config.yaml')
+    config_path = os.path.join(os.path.dirname(__file__), '..', '..', 'config.yaml')
     with open(config_path, 'r') as f:
         return yaml.safe_load(f)
 
@@ -80,14 +85,21 @@ async def get_atp_match_data_task(year: int, tourn_id: str, match_id: str, data_
     
     # Select endpoint and URL
     if data_type == "match-info":
-        url = f"https://www.atptour.com/-/Hawkeye/MatchStats/Complete/{year}/{tourn_id}/{match_id_upper}"
+        url_template = config['atp']['hawkeye_url_template']
+        url = url_template % {'year': year, 'tourn_id': tourn_id, 'match_id': match_id_upper}
         need_decode = False
     else:
         # Infosys endpoints (key-stats, rally-analysis, etc.)
-        endpoints = config.get('endpoints', {}).get('match_stats', {}).get('urls', {})
+        base_url = config['infosys']['base_url']
+        endpoints = config['infosys']['endpoints']
         if data_type not in endpoints:
             raise ValueError(f"Unknown match data_type: {data_type}")
-        url = endpoints[data_type] % {'year': year, 'tourn_id': tourn_id, 'match_id': match_id_upper}
+        url = endpoints[data_type] % {
+            'base_url': base_url,
+            'year': year,
+            'tourn_id': tourn_id,
+            'match_id': match_id_upper
+        }
         need_decode = True
 
     headers = {"User-Agent": get_random_user_agent()}
@@ -101,10 +113,18 @@ async def get_atp_match_data_task(year: int, tourn_id: str, match_id: str, data_
             if need_decode:
                 # Decrypt Infosys data
                 results_json = resp.json()
-                return decode_infosys_data(results_json)
+                match_payload = decode_infosys_data(results_json)
             else:
                 # Direct JSON from Hawkeye
-                return resp.json()
+                match_payload = resp.json()
+            
+            retrieved_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
+            return {
+                "metadata": {
+                    "retrieved_at": retrieved_at
+                },
+                "data": match_payload
+            }
                 
     except Exception as e:
         logger.error(f"Failed to get {data_type} for {year}/{tourn_id}/{match_id}: {e}")
@@ -143,13 +163,18 @@ def upload_atp_match_data_to_s3_task(data: dict, year: int, tourn_id: str, match
     round_short = get_round_short(round_name)
     match_id_upper = str(match_id).upper()
     
-    bucket = get_bucket_name()
     timestamp = datetime.datetime.now(datetime.timezone.utc)
+    ts_str = timestamp.strftime("%Y%m%d_%H%M%S")
     
-    # Matching original project filename format:
-    # {tourn_id}_{round_short}_{player1}-vs-{player2}_{year}_{match_id}_{data_type}.json
-    filename = f"{tourn_id}_{round_short}_{p1}-vs-{p2}_{year}_{match_id_upper}_{data_type}.json"
-    key = f"raw/match-stats/year={year}/tourn={tourn_id}/{filename}"
+    config = get_config()
+    bucket = os.getenv("S3_BUCKET", config['s3']['default_bucket'])
+    key_template = config['s3']['paths']['match_stats']
+    key = key_template % {
+        'year': year,
+        'tourn_id': tourn_id,
+        'filename': filename,
+        'timestamp': ts_str
+    }
     
     metadata = {
         "endpoint": "match_stats",
@@ -160,3 +185,52 @@ def upload_atp_match_data_to_s3_task(data: dict, year: int, tourn_id: str, match
     }
     
     return upload_json_to_s3(data, bucket, key, metadata)
+
+import argparse
+import asyncio
+from dotenv import load_dotenv
+
+async def main_cli():
+    parser = argparse.ArgumentParser(description="Get ATP Match Stats/Info and upload to S3")
+    parser.add_argument("--year", type=int, required=True)
+    parser.add_argument("--tourn-id", type=str, required=True)
+    parser.add_argument("--match-id", type=str, required=True)
+    parser.add_argument("--type", type=str, required=True, choices=["match-info", "key-stats", "rally-analysis", "stroke-analysis", "court-vision"])
+    
+    # Optional metadata for naming
+    parser.add_argument("--p1", type=str, default="P1")
+    parser.add_argument("--p2", type=str, default="P2")
+    parser.add_argument("--round", type=str, default="R")
+    
+    args = parser.parse_args()
+    
+    match_metadata = {
+        "player1_name": args.p1,
+        "player2_name": args.p2,
+        "round": args.round
+    }
+    
+    print(f"Fetching {args.type} for {args.year}/{args.tourn_id}/{args.match_id}...")
+    data = await get_atp_match_data_task(
+        year=args.year,
+        tourn_id=args.tourn_id,
+        match_id=args.match_id,
+        data_type=args.type
+    )
+    
+    if data and data.get("data"):
+        s3_uri = upload_atp_match_data_to_s3_task(
+            data=data,
+            year=args.year,
+            tourn_id=args.tourn_id,
+            match_id=args.match_id,
+            data_type=args.type,
+            match_metadata=match_metadata
+        )
+        print(f"Upload complete: {s3_uri}")
+    else:
+        print("No data found.")
+
+if __name__ == "__main__":
+    load_dotenv()
+    asyncio.run(main_cli())

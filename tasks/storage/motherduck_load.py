@@ -6,18 +6,21 @@ Implements idempotency by tracking loaded files in a metadata table.
 """
 import logging
 import os
-from datetime import datetime, timezone
-
 import duckdb
-from prefect import task
+
+import yaml
 
 logger = logging.getLogger(__name__)
 
+def get_config():
+    config_path = os.path.join(os.path.dirname(__file__), '..', '..', 'config.yaml')
+    with open(config_path, 'r') as f:
+        return yaml.safe_load(f)
 
 def get_motherduck_connection():
     """Create and return a MotherDuck connection using env vars."""
     token = os.getenv("MOTHERDUCK_TOKEN")
-    database = os.getenv("MOTHERDUCK_DATABASE", "infotennis_raw")
+    database = get_motherduck_database()
     
     if not token:
         raise ValueError("MOTHERDUCK_TOKEN environment variable is required")
@@ -25,111 +28,60 @@ def get_motherduck_connection():
     return duckdb.connect(f"md:{database}?motherduck_token={token}")
 
 
-def extract_endpoint_from_s3_uri(s3_uri: str) -> str:
+def get_motherduck_database() -> str:
+    """Get MotherDuck database name from env var or use default."""
+    config = get_config()
+    return os.getenv("MOTHERDUCK_DATABASE", config['motherduck']['default_database'])
+
+
+
+
+def execute_sql_file(sql_path: str, params: dict, description: str = "SQL Execution") -> duckdb.DuckDBPyConnection:
     """
-    Extract endpoint name from S3 URI.
-    Format: s3://{bucket}/raw/{endpoint_name}/year={YYYY}/month={MM}/{timestamp}.json
-    """
-    parts = s3_uri.replace("s3://", "").split("/")
-    if len(parts) >= 3:
-        return parts[2]
-    raise ValueError(f"Cannot extract endpoint from S3 URI: {s3_uri}")
-
-
-def ensure_loaded_files_table(con) -> None:
-    """Create the _loaded_files metadata table if it doesn't exist."""
-    con.execute("""
-        CREATE TABLE IF NOT EXISTS _loaded_files (
-            s3_uri VARCHAR PRIMARY KEY,
-            endpoint VARCHAR,
-            table_name VARCHAR,
-            rows_loaded INTEGER,
-            loaded_at TIMESTAMP
-        )
-    """)
-
-
-def is_file_already_loaded(con, s3_uri: str) -> bool:
-    """Check if a file has already been loaded."""
-    result = con.execute(
-        "SELECT COUNT(*) FROM _loaded_files WHERE s3_uri = ?",
-        [s3_uri]
-    ).fetchone()
-    return result[0] > 0
-
-
-@task(
-    name="load_to_motherduck",
-    description="Load JSON from S3 into MotherDuck using schema-on-read",
-    retries=2,
-    retry_delay_seconds=10,
-    log_prints=True
-)
-def load_to_motherduck(s3_uri: str) -> int:
-    """
-    Load JSON data from S3 into MotherDuck using schema-on-read.
+    Read a SQL file, format it with params, and execute it in MotherDuck.
     
     Args:
-        s3_uri: Full S3 URI of the JSON file
+        sql_path: Path to the .sql file
+        params: Dictionary of parameters to format the SQL string
+        description: A short description for logging
         
     Returns:
-        Number of rows loaded (0 if file was already loaded)
+        The active DuckDB connection (caller should close it if not needed further)
     """
-    endpoint = extract_endpoint_from_s3_uri(s3_uri)
-    table_name = f"raw_{endpoint}"
+    print(f"🚀 Starting: {description}")
     
-    print(f"Loading {s3_uri} into table '{table_name}'")
-    
-    con = get_motherduck_connection()
-    
+    # 1. Read SQL file
+    if not os.path.exists(sql_path):
+        raise FileNotFoundError(f"SQL file not found at: {sql_path}")
+        
+    with open(sql_path, "r") as f:
+        sql_template = f.read()
+        
+    # 2. Format SQL
     try:
-        ensure_loaded_files_table(con)
+        sql = sql_template.format(**params)
+    except KeyError as e:
+        logger.error(f"Missing parameter for SQL template: {e}")
+        raise
         
-        # Idempotency check
-        if is_file_already_loaded(con, s3_uri):
-            print(f"⏭️ File already loaded, skipping: {s3_uri}")
-            return 0
-        
+    # 3. Connect and Execute
+    con = get_motherduck_connection()
+    try:
         # Configure S3 access
+        print("🔧 Configuring MotherDuck S3 access (httpfs)...")
         con.execute("INSTALL httpfs; LOAD httpfs;")
-        con.execute(f"SET s3_region = '{os.getenv('AWS_REGION', 'us-east-1')}'")
+        con.execute(f"SET s3_region = '{os.getenv('AWS_REGION')}'")
         con.execute(f"SET s3_access_key_id = '{os.getenv('AWS_ACCESS_KEY_ID')}'")
         con.execute(f"SET s3_secret_access_key = '{os.getenv('AWS_SECRET_ACCESS_KEY')}'")
         
-        # Check if table exists
-        table_exists = con.execute(f"""
-            SELECT COUNT(*) FROM information_schema.tables 
-            WHERE table_name = '{table_name}'
-        """).fetchone()[0] > 0
-        
-        if not table_exists:
-            print(f"Creating table '{table_name}' with schema-on-read")
-            con.execute(f"""
-                CREATE TABLE {table_name} AS 
-                SELECT *, '{s3_uri}' as _source_file, CURRENT_TIMESTAMP as _loaded_at
-                FROM read_json_auto('{s3_uri}', maximum_object_size=67108864)
-            """)
-        else:
-            print(f"Inserting into existing table '{table_name}'")
-            con.execute(f"""
-                INSERT INTO {table_name}
-                SELECT *, '{s3_uri}' as _source_file, CURRENT_TIMESTAMP as _loaded_at
-                FROM read_json_auto('{s3_uri}', maximum_object_size=67108864)
-            """)
-        
-        # Get row count
-        row_count = con.execute(f"""
-            SELECT COUNT(*) FROM {table_name} WHERE _source_file = '{s3_uri}'
-        """).fetchone()[0]
-        
-        # Register loaded file
-        con.execute("""
-            INSERT INTO _loaded_files (s3_uri, endpoint, table_name, rows_loaded, loaded_at)
-            VALUES (?, ?, ?, ?, ?)
-        """, [s3_uri, endpoint, table_name, row_count, datetime.now(timezone.utc)])
-        
-        print(f"✅ Successfully loaded {row_count} rows into '{table_name}'")
-        return row_count
-        
-    finally:
+        print(f"📊 Executing SQL from {sql_path}...")
+        print("--- COMPILED SQL START ---")
+        print(sql)
+        print("--- COMPILED SQL END ---")
+        con.execute(sql)
+        print(f"✅ {description} completed successfully.")
+        return con
+    except Exception as e:
         con.close()
+        logger.error(f"Failed to execute SQL file {sql_path}: {e}")
+        raise

@@ -1,11 +1,24 @@
-from prefect import task
-from tenacity import retry, stop_after_attempt, wait_exponential
+import sys
+from pathlib import Path
+# Add project root to sys.path for standalone execution
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+import argparse
+from dotenv import load_dotenv
+
 import httpx
 import datetime
 import random
-from bs4 import BeautifulSoup
 import os
 import yaml
+import logging
+from typing import Any, Dict
+from bs4 import BeautifulSoup
+from prefect import task
+from tenacity import ( 
+    retry,
+    stop_after_attempt,
+    wait_exponential
+)
 
 USER_AGENTS = [
     # A few common user agents; you can expand this list or use fake-useragent if available
@@ -19,43 +32,27 @@ def get_random_user_agent():
     return random.choice(USER_AGENTS)
 
 def get_config():
-    config_path = os.path.join(os.path.dirname(__file__), '..', '..', 'config', 'config.yaml')
+    config_path = os.path.join(os.path.dirname(__file__), '..', '..', 'config.yaml')
     with open(config_path, 'r') as f:
         return yaml.safe_load(f)
 
 @task
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
-def get_atp_results_archive_task(year: int = None):
+def get_atp_results_archive_task(year: int | None = None):
     """
     Scrape the ATP Results Archive for a specific year and return a list of tournament dicts.
     """
     if year is None:
         year = datetime.datetime.now().year
     config = get_config()
-    root_url = config.get('atp_root_url', 'https://www.atptour.com')
-    archive_path = config.get('atp_results_archive_path', '/en/scores/results-archive')
+    root_url = config['atp']['root_url']
+    archive_path = config['atp']['results_archive_path']
     url = f"{root_url}{archive_path}?year={year}"
     headers = {"User-Agent": get_random_user_agent()}
-    import logging
     logger = logging.getLogger("get_atp_results_archive_task")
     try:
-        with httpx.Client(timeout=20) as client:
-            resp = client.get(url, headers=headers)
-            resp.raise_for_status()
-    except httpx.ConnectTimeout:
-        logger.error(f"Connection timed out for {url}")
-        raise
-    except httpx.HTTPStatusError as e:
-        logger.error(f"HTTP error {e.response.status_code} for {url}: {e.response.text}")
-        raise
-    except httpx.RequestError as e:
-        logger.error(f"Request failed for {url}: {type(e).__name__}: {e}")
-        raise
-    except Exception as e:
-        logger.error(f"Unexpected error for {url}: {type(e).__name__}: {e}")
-        raise
-    try:
         with httpx.Client(timeout=20, follow_redirects=True) as client:
+            print(f"Fetching ATP archive from: {url}")
             resp = client.get(url, headers=headers)
             resp.raise_for_status()
             html_content = resp.text
@@ -141,24 +138,51 @@ def get_atp_results_archive_task(year: int = None):
         except Exception as e:
             logger.warning(f"Skipping a tournament due to parsing error: {e}")
             continue
+    
+    retrieved_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    return {
+        "metadata": {
+            "retrieved_at": retrieved_at
+        },
+        "data": tournaments_data
+    }
 from tasks.storage.s3_storage import upload_json_to_s3, get_bucket_name
 
 @task(name="upload_atp_calendar_to_s3")
-def upload_atp_calendar_to_s3_task(data: list, year: int) -> str:
+def upload_atp_calendar_to_s3_task(data: dict, year: int) -> str:
     """
-    Upload ATP Calendar data to S3.
+    Upload ATP Calendar data (wrapped in metadata) to S3 staging (incoming).
     """
     timestamp = datetime.datetime.now(datetime.timezone.utc)
-    month = timestamp.strftime("%m")
     ts_str = timestamp.strftime("%Y%m%d_%H%M%S")
     
-    bucket = get_bucket_name()
-    key = f"raw/atp_results_archive/year={year}/month={month}/{ts_str}.json"
+    config = get_config()
+    bucket = os.getenv("S3_BUCKET", config['s3']['default_bucket'])
+    key_template = config['s3']['paths']['atp_results_archive']
+    key = key_template % {'year': year, 'timestamp': ts_str}
     
     metadata = {
         "endpoint": "atp_results_archive",
         "year": str(year),
-        "count": str(len(data))
+        "count": str(len(data.get("data", []))),
+        # Also preserve scraped_at if available or use current
+        "scraped_at": data.get("metadata", {}).get("retrieved_at", timestamp.isoformat())
     }
     
     return upload_json_to_s3(data, bucket, key, metadata)
+    
+
+if __name__ == "__main__":
+    load_dotenv()
+    parser = argparse.ArgumentParser(description="Scrape ATP Calendar and upload to S3")
+    parser.add_argument("--year", type=int, help="Year to scrape", default=datetime.datetime.now().year)
+    args = parser.parse_args()
+    
+    print(f"Scraping ATP Calendar for year: {args.year}")
+    results = get_atp_results_archive_task(args.year)
+    
+    if results and results.get("data"):
+        s3_uri = upload_atp_calendar_to_s3_task(results, args.year)
+        print(f"Upload complete: {s3_uri}")
+    else:
+        print("No tournament data found.")

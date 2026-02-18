@@ -1,0 +1,33 @@
+# infotennis_v2 Configuration
+# Non-sensitive settings for the cloud ELT pipeline
+
+# ATP Scraping
+atp:
+  root_url: "https://www.atptour.com"
+  results_archive_path: "/en/scores/results-archive"
+  hawkeye_url_template: "https://www.atptour.com/-/Hawkeye/MatchStats/Complete/%(year)s/%(tourn_id)s/%(match_id)s"
+
+# Infosys Match Stats API
+infosys:
+  base_url: "https://itp-atp-sls.infosys-platforms.com/static/prod/stats-plus"
+  endpoints:
+    key-stats: "%(base_url)s/%(year)s/%(tourn_id)s/%(match_id)s/keystats.json"
+    rally-analysis: "%(base_url)s/%(year)s/%(tourn_id)s/%(match_id)s/rally-analysis.json"
+    stroke-analysis: "%(base_url)s/%(year)s/%(tourn_id)s/%(match_id)s/stroke-analysis.json"
+    court-vision: "%(base_url)s/%(year)s/%(tourn_id)s/%(match_id)s/courtvision.json"
+
+# S3 Storage
+s3:
+  default_bucket: "infotennis-v2"
+  raw_prefix: "raw"
+  timestamp_format: "%Y%m%d_%H%M%S"
+  paths:
+    atp_results_archive: "raw/atp_results_archive/incoming/year=%(year)s/atp_calendar_%(year)s_%(timestamp)s.json"
+    atp_tournament: "raw/atp_tournament/year=%(year)s/tourn=%(tournament_id)s/atp_tournament_results_%(year)s_%(tournament_id)s_%(timestamp)s.json"
+    match_stats: "raw/match-stats/year=%(year)s/tourn=%(tourn_id)s/%(filename)s"
+
+# MotherDuck
+motherduck:
+  default_database: "infotennis_v2_raw"
+  tables:
+    atp_results_archive: "atp_calendar_test"

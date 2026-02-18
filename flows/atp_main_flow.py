@@ -9,22 +9,18 @@ Orchestrates the complete ELT pipeline:
 import logging
 import os
 from datetime import datetime
-from typing import Optional
 
 from dotenv import load_dotenv
 from prefect import flow, get_run_logger
 
 # Load .env file for local development
-# In Prefect Cloud, set env vars in the work pool or deployment
 load_dotenv()
 
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from tasks.ingestion.get_atp_calendar import get_atp_results_archive_task
-from tasks.storage.s3_storage import upload_to_s3
-from tasks.storage.motherduck_load import load_to_motherduck
+from tasks.ingestion.get_atp_calendar import get_atp_results_archive_task, upload_atp_calendar_to_s3_task
 
 logging.basicConfig(
     level=logging.INFO,
@@ -39,7 +35,7 @@ logging.basicConfig(
     retry_delay_seconds=30,
     log_prints=True
 )
-def atp_results_archive_flow(year: Optional[int] = None):
+def atp_results_archive_flow(year: int | None = None):
     """
     Complete ELT flow for ATP Results Archive.
     """
@@ -54,46 +50,33 @@ def atp_results_archive_flow(year: Optional[int] = None):
     
     # Step 1: Scrape
     logger.info("\n📥 Step 1: Scraping ATP Results Archive...")
-    tournaments = get_atp_results_archive_task(year=year)
+    results = get_atp_results_archive_task(year=year)
     
-    if not tournaments:
+    if not results or not results.get("data"):
         logger.warning("No tournament data scraped")
         return {"status": "no_data", "year": year}
     
-    print(f"✅ Scraped {len(tournaments)} tournaments")
+    tournaments_list = results.get("data", [])
+    print(f"✅ Scraped {len(tournaments_list)} tournaments")
     
     # Step 2: Upload to S3
     print("\n📤 Step 2: Uploading to S3...")
-    payload = {
-        "metadata": {
-            "year": year,
-            "scraped_at": datetime.now().isoformat(),
-            "record_count": len(tournaments)
-        },
-        "tournaments": tournaments
+    s3_uri = upload_atp_calendar_to_s3_task(data=results, year=year)
+    
+    # Summary
+    print(f"\n{'='*60}")
+    print("✅ Pipeline Complete!")
+    print(f"   Year: {year}")
+    print(f"   Tournaments: {len(tournaments_list)}")
+    print(f"   S3 URI: {s3_uri}")
+    print(f"{'='*60}")
+    
+    return {
+        "status": "success",
+        "year": year,
+        "tournaments_scraped": len(tournaments_list),
+        "s3_uri": s3_uri
     }
-    s3_uri = upload_to_s3(data=payload, endpoint_name="atp_results_archive")
-    
-    # # Step 3: Load to MotherDuck
-    # print("\n🦆 Step 3: Loading to MotherDuck...")
-    # rows_loaded = load_to_motherduck(s3_uri=s3_uri)
-    
-    # # Summary
-    # print(f"\n{'='*60}")
-    # print("✅ Pipeline Complete!")
-    # print(f"   Year: {year}")
-    # print(f"   Tournaments: {len(tournaments)}")
-    # print(f"   S3 URI: {s3_uri}")
-    # print(f"   Rows loaded: {rows_loaded}")
-    # print(f"{'='*60}")
-    
-    # return {
-    #     "status": "success",
-    #     "year": year,
-    #     "tournaments_scraped": len(tournaments),
-    #     "s3_uri": s3_uri,
-    #     "rows_loaded": rows_loaded
-    # }
 
 
 if __name__ == "__main__":

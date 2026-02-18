@@ -1,9 +1,19 @@
+import sys
+from pathlib import Path
+# Add project root to sys.path for standalone execution
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+
 from prefect import task
 from tenacity import retry, stop_after_attempt, wait_exponential
 import httpx
 from bs4 import BeautifulSoup
 import logging
-import random
+import datetime
+import yaml
+import os
+
+import argparse
+from dotenv import load_dotenv
 
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -13,6 +23,11 @@ USER_AGENTS = [
 
 def get_random_user_agent():
     return random.choice(USER_AGENTS)
+
+def get_config():
+    config_path = os.path.join(os.path.dirname(__file__), '..', '..', 'config.yaml')
+    with open(config_path, 'r') as f:
+        return yaml.safe_load(f)
 
 def parse_player_scores(elem_player_match_score):
     player_scores = []
@@ -60,7 +75,8 @@ def parse_match_content(elem_match):
         round_text = round_elem.text.split(" - ")[0].replace("-", "") if round_elem else "Unknown Round"
         round_name = " ".join([word.capitalize() for word in round_text.split()])
         
-        url_atp = "https://www.atptour.com"
+        config = get_config()
+        url_atp = config['atp']['root_url']
         cta_elem = elem_match.find("div", class_="match-cta")
         url = ""
         if cta_elem:
@@ -136,13 +152,19 @@ def parse_match_content(elem_match):
         logging.getLogger("scrape_atp_tournament").warning(f"Error parsing match content: {e}")
         return None
 
-@task(name="get_atp_tournament")
+@task(name="get_atp_tournament_results")
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
-def get_atp_tournament_task(url: str, tournament_name: str, tournament_id: str, year: int, match_type: str = "singles"):
+def get_atp_tournament_results_task(
+    url: str,
+    tournament_name: str,
+    tournament_id: str,
+    year: int,
+    match_type: str = "singles"
+):
     """
     Scrapes ATP Tournament Results for a given tournament.
     """
-    logger = logging.getLogger("get_atp_tournament")
+    logger = logging.getLogger("get_atp_tournament_results")
     
     if "matchType" not in url:
         url = f"{url}?matchType={match_type}"
@@ -174,24 +196,66 @@ def get_atp_tournament_task(url: str, tournament_name: str, tournament_id: str, 
                 })
                 matches_data.append(match_dict)
     
+    retrieved_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    return {
+        "metadata": {
+            "retrieved_at": retrieved_at
+        },
+        "data": matches_data
+    }
+    
 from tasks.storage.s3_storage import upload_json_to_s3, get_bucket_name
 
-@task(name="upload_atp_tournament_to_s3")
-def upload_atp_tournament_to_s3_task(data: list, tournament_id: str, year: int) -> str:
+@task(name="upload_atp_tournament_results_to_s3")
+def upload_atp_tournament_results_to_s3_task(data: dict, tournament_id: str, year: int) -> str:
     """
     Upload ATP Tournament match data to S3.
     """
     timestamp = datetime.datetime.now(datetime.timezone.utc)
     ts_str = timestamp.strftime("%Y%m%d_%H%M%S")
     
-    bucket = get_bucket_name()
-    key = f"raw/atp_tournament/year={year}/tourn={tournament_id}/{ts_str}.json"
+    config = get_config()
+    bucket = os.getenv("S3_BUCKET", config['s3']['default_bucket'])
+    key_template = config['s3']['paths']['atp_tournament']
+    key = key_template % {
+        'year': year,
+        'tournament_id': tournament_id,
+        'timestamp': ts_str
+    }
     
     metadata = {
         "endpoint": "atp_tournament",
         "tournament_id": str(tournament_id),
         "year": str(year),
-        "count": str(len(data))
+        "count": str(len(data.get("data", [])))
     }
     
     return upload_json_to_s3(data, bucket, key, metadata)
+
+
+
+if __name__ == "__main__":
+    load_dotenv()
+    parser = argparse.ArgumentParser(description="Scrape ATP Tournament Results and upload to S3")
+    parser.add_argument("--url", type=str, required=True, help="Tournament results URL")
+    parser.add_argument("--name", type=str, required=True, help="Tournament name")
+    parser.add_argument("--id", type=str, required=True, help="Tournament ID")
+    parser.add_argument("--year", type=int, required=True, help="Tournament year")
+    parser.add_argument("--type", type=str, default="singles", choices=["singles", "doubles"], help="Match type")
+    
+    args = parser.parse_args()
+    
+    print(f"Scraping ATP Tournament: {args.name} ({args.year})")
+    results = get_atp_tournament_results_task(
+        url=args.url,
+        tournament_name=args.name,
+        tournament_id=args.id,
+        year=args.year,
+        match_type=args.type
+    )
+    
+    if results and results.get("data"):
+        s3_uri = upload_atp_tournament_results_to_s3_task(results, args.id, args.year)
+        print(f"Upload complete: {s3_uri}")
+    else:
+        print("No match data found.")

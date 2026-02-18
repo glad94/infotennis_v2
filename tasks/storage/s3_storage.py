@@ -12,8 +12,14 @@ from datetime import datetime, timezone
 import boto3
 from prefect import task
 
+import yaml
+
 logger = logging.getLogger(__name__)
 
+def get_config():
+    config_path = os.path.join(os.path.dirname(__file__), '..', '..', 'config.yaml')
+    with open(config_path, 'r') as f:
+        return yaml.safe_load(f)
 
 def get_s3_client():
     """Create and return an S3 client. Uses AWS env vars automatically."""
@@ -22,7 +28,8 @@ def get_s3_client():
 
 def get_bucket_name() -> str:
     """Get S3 bucket name from env var or use default."""
-    bucket = os.getenv("S3_BUCKET", "infotennis-v2")
+    config = get_config()
+    bucket = os.getenv("S3_BUCKET", config['s3']['default_bucket'])
     return bucket.replace("s3://", "").strip("/")
 
 
@@ -77,6 +84,25 @@ def upload_json_to_s3(data: dict, bucket: str, key: str, metadata: dict = None) 
     )
     
     s3_uri = f"s3://{bucket}/{key}"
-    print(f"✅ Successfully uploaded to {s3_uri}")
+    print(f"Successfully uploaded to {s3_uri}")
     
     return s3_uri
+
+
+def move_s3_file(bucket: str, source_key: str, dest_key: str) -> None:
+    """
+    Move a file in S3 by copying it to the destination and deleting the source.
+    """
+    s3_client = get_s3_client()
+    copy_source = {"Bucket": bucket, "Key": source_key}
+    
+    try:
+        print(f"Moving s3://{bucket}/{source_key} to s3://{bucket}/{dest_key}")
+        # Copy the object
+        s3_client.copy(copy_source, bucket, dest_key)
+        # Delete the original object
+        s3_client.delete_object(Bucket=bucket, Key=source_key)
+        print(f"Successfully moved to s3://{bucket}/{dest_key}")
+    except Exception as e:
+        logger.error(f"Failed to move s3://{bucket}/{source_key}: {e}")
+        raise

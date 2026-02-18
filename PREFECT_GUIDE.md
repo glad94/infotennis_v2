@@ -28,9 +28,25 @@ You'll immediately see the flow run appear in the UI at: **Flows → ATP Results
 
 ---
 
-### Step 3 (Optional): Create a Deployment
+---
 
-To make the flow **schedulable** and visible in the Deployments tab:
+## Running Isolated Steps (Tasks)
+
+If you want to run a specific part of the pipeline (e.g., just Step 4: MotherDuck Load) without running the full flow, you can run the task scripts directly.
+
+### Example: Run Step 4 (MotherDuck Load) only
+
+```bash
+uv run tasks/storage/load_atp_calendar_motherduck.py
+```
+
+This will:
+1.  Run only the loading logic.
+2.  Technically create a "Utility" flow run so you can still track it in the UI.
+
+---
+
+### Step 3: Create a Deployment (UI Button)
 
 ```bash
 # Create deployment

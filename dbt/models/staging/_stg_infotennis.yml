@@ -1,0 +1,56 @@
+version: 2
+
+models:
+  - name: stg_atp_calendar_test
+    description: >
+      Flattened ATP calendar data. Each row is one tournament from one file version.
+      Parsed from the raw JSON blob in infotennis_v2_raw.atp_calendar_test.
+    columns:
+      - name: tournament_id
+        description: "ATP tournament identifier"
+        tests:
+          - not_null
+      - name: meta_file_modified
+        description: "Timestamp of the source file ingestion"
+        tests:
+          - not_null
+      - name: year
+        description: "Calendar year of the tournament"
+      - name: tournament
+        description: "Tournament name"
+      - name: category
+        description: "Tournament category"
+      - name: city
+        description: "Host city"
+      - name: country
+        description: "Host country"
+      - name: dates
+        description: "Tournament date range as text"
+      - name: singles_winner
+        description: "Singles winner name, empty string or null if not yet completed"
+      - name: doubles_winner
+        description: "Comma-separated doubles winners, null if not yet completed"
+      - name: url
+        description: "URL to tournament results page, null if tournament has not completed"
+      - name: meta_file_name
+        description: "Source S3 filename"
+    tests:
+      - unique:
+          column_name: "tournament_id || '|' || meta_file_modified"
+
+  - name: stg_atp_calendar_changes_test
+    description: >
+      Tournaments that have newly completed between the two most recent file versions.
+      Identified by url transitioning from NULL to a non-NULL value.
+    columns:
+      - name: tournament_id
+        description: "ATP tournament identifier"
+        tests:
+          - not_null
+          - unique
+      - name: url
+        description: "URL to tournament results page (now available)"
+        tests:
+          - not_null
+      - name: previous_meta_file_modified
+        description: "Timestamp of the previous file version where url was NULL"

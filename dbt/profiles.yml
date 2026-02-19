@@ -1,0 +1,17 @@
+infotennis_v2:
+  target: dev
+  outputs:
+    dev:
+      type: duckdb
+      path: "md:infotennis_v2_staging"
+      schema: dev
+      motherduck_token: "{{ env_var('MOTHERDUCK_TOKEN') }}"
+      extensions:
+        - httpfs
+    prod:
+      type: duckdb
+      path: "md:infotennis_v2_staging"
+      schema: main
+      motherduck_token: "{{ env_var('MOTHERDUCK_TOKEN') }}"
+      extensions:
+        - httpfs

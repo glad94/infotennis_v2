@@ -1,0 +1,18 @@
+version: 2
+
+sources:
+  - name: infotennis_v2_raw
+    database: infotennis_v2_raw
+    schema: main
+    tables:
+      - name: atp_calendar_test
+        description: >
+          Raw ATP calendar data loaded from S3 JSON files.
+          Each row represents one file load containing the full calendar as a JSON blob.
+        columns:
+          - name: data
+            description: "JSON blob containing metadata and a list of tournament objects"
+          - name: meta_file_name
+            description: "S3 key / filename of the source JSON file"
+          - name: meta_file_modified
+            description: "Timestamp when the file was retrieved (from metadata.retrieved_at)"

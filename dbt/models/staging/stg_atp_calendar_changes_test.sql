@@ -90,7 +90,7 @@ currently_ongoing as (
         'ongoing' as change_type
     from current_version as curr
     where curr.url is not null
-      and split_part(curr.url, '/', 4) = 'current'
+      and split_part(regexp_replace(url, '^https?://', ''), '/', 4) = 'current'
 
 ),
 

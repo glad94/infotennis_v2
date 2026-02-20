@@ -40,8 +40,8 @@ models:
 
   - name: stg_atp_calendar_changes_test
     description: >
-      Tournaments that have newly completed between the two most recent file versions.
-      Identified by url transitioning from NULL to a non-NULL value.
+      Tournaments that need results scraped: either newly completed (url null->non-null)
+      or currently ongoing (url contains '/current/').
     columns:
       - name: tournament_id
         description: "ATP tournament identifier"
@@ -49,8 +49,84 @@ models:
           - not_null
           - unique
       - name: url
-        description: "URL to tournament results page (now available)"
+        description: "URL to tournament results page"
         tests:
           - not_null
       - name: previous_meta_file_modified
-        description: "Timestamp of the previous file version where url was NULL"
+        description: "Timestamp of the previous file version (null for ongoing)"
+      - name: change_type
+        description: "'newly_completed' or 'ongoing'"
+
+  - name: stg_atp_tournaments
+    description: >
+      Flattened ATP tournament detail data from the most recent file load.
+      Contains surfaces, financial commitments, draw sizes, and other attributes.
+    columns:
+      - name: tournament_id
+        description: "ATP tournament identifier"
+        tests:
+          - not_null
+          - unique
+      - name: tournament_name
+        description: "Tournament display name"
+      - name: location
+        description: "City and country string"
+      - name: surface
+        description: "Playing surface (Hard, Clay, Grass, Carpet)"
+      - name: indoor_outdoor
+        description: "Whether the event is Indoor or Outdoor"
+      - name: total_financial_commitment
+        description: "Total tournament financial commitment"
+      - name: singles_draw_size
+        description: "Number of players in singles draw"
+      - name: doubles_draw_size
+        description: "Number of teams in doubles draw"
+      - name: event_type
+        description: "Tournament tier/type code"
+
+  - name: stg_atp_tournament_results
+    description: >
+      Flattened and deduplicated ATP tournament match results.
+      Only the most recent version of each (year, tournament_id, match_id) is kept.
+    columns:
+      - name: match_id
+        description: "ATP match identifier"
+        tests:
+          - not_null
+      - name: tournament_id
+        description: "ATP tournament identifier"
+        tests:
+          - not_null
+      - name: year
+        description: "Tournament year"
+        tests:
+          - not_null
+      - name: round
+        description: "Round name (e.g. Quarterfinals, Final)"
+      - name: player1_name
+        description: "Player 1 full name"
+      - name: player1_id
+        description: "Player 1 ATP ID"
+      - name: player2_name
+        description: "Player 2 full name"
+      - name: player2_id
+        description: "Player 2 ATP ID"
+      - name: score
+        description: "Match score string"
+    tests:
+      - unique:
+          column_name: "year || '|' || tournament_id || '|' || match_id"
+
+  - name: stg_atp_tournament_results_new
+    description: >
+      Newly added tournament results identified by comparing the two most recent
+      file loads per tournament. Drives downstream match data retrieval.
+    columns:
+      - name: match_id
+        description: "ATP match identifier of the new result"
+        tests:
+          - not_null
+      - name: tournament_id
+        description: "ATP tournament identifier"
+        tests:
+          - not_null

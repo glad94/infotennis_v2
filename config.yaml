@@ -23,6 +23,7 @@ s3:
   timestamp_format: "%Y%m%d_%H%M%S"
   paths:
     atp_results_archive: "raw/atp_results_archive/incoming/year=%(year)s/atp_calendar_%(year)s_%(timestamp)s.json"
+    atp_tournaments: "raw/atp_tournaments/incoming/year=%(year)s/atp_tournaments_%(year)s_%(timestamp)s.json"
     atp_tournament: "raw/atp_tournament/year=%(year)s/tourn=%(tournament_id)s/atp_tournament_results_%(year)s_%(tournament_id)s_%(timestamp)s.json"
     match_stats: "raw/match-stats/year=%(year)s/tourn=%(tourn_id)s/%(filename)s"
 
@@ -31,3 +32,5 @@ motherduck:
   default_database: "infotennis_v2_raw"
   tables:
     atp_results_archive: "atp_calendar_test"
+    atp_tournaments: "atp_tournaments"
+    atp_tournament_results: "atp_tournament_results"

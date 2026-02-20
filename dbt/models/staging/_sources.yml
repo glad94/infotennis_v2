@@ -16,3 +16,25 @@ sources:
             description: "S3 key / filename of the source JSON file"
           - name: meta_file_modified
             description: "Timestamp when the file was retrieved (from metadata.retrieved_at)"
+      - name: atp_tournaments
+        description: >
+          Raw ATP tournament detail data from the ATP Tour calendar API.
+          Each row is one file load containing tournament surfaces, financials, draw sizes, etc.
+        columns:
+          - name: data
+            description: "JSON blob containing metadata and TournamentDates array"
+          - name: meta_file_name
+            description: "S3 key / filename of the source JSON file"
+          - name: meta_file_modified
+            description: "Timestamp when the file was retrieved"
+      - name: atp_tournament_results
+        description: >
+          Raw ATP tournament match results scraped from tournament results pages.
+          Each row is one file load containing all matches for a given tournament.
+        columns:
+          - name: data
+            description: "JSON blob containing metadata and array of match objects"
+          - name: meta_file_name
+            description: "S3 key / filename of the source JSON file"
+          - name: meta_file_modified
+            description: "Timestamp when the file was retrieved"

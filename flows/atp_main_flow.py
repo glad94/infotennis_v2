@@ -6,7 +6,13 @@ End-to-end pipeline that:
 2. Determines which tournaments have new/in-progress results
 3. Scrapes, uploads, and transforms tournament results for those targets
 4. Refreshes the staging layer for downstream consumption
+
+NOTE: Heavy library imports (httpx, boto3, duckdb, etc.) are deferred into
+task / flow function bodies so that cloudpickle can serialise the flow
+without hitting unpicklable _thread._local objects.
 """
+from __future__ import annotations
+
 import datetime
 import logging
 import os
@@ -16,28 +22,11 @@ import time
 from pathlib import Path
 from typing import Any
 
-import duckdb
 from dotenv import load_dotenv
 from prefect import flow, get_run_logger, task
 
 # Add project root to sys.path
 sys.path.insert(0, str(Path(__file__).parent.parent))
-
-from tasks.ingestion.get_atp_calendar import (
-    get_atp_results_archive_task,
-    upload_atp_calendar_to_s3_task,
-)
-from tasks.ingestion.get_atp_tournament_results import (
-    get_atp_tournament_results_task,
-    upload_atp_tournament_results_to_s3_task,
-)
-from tasks.storage.load_atp_calendar_motherduck import (
-    load_atp_calendar_to_motherduck_task,
-)
-from tasks.storage.load_atp_tournament_results_motherduck import (
-    load_atp_tournament_results_to_motherduck_task,
-)
-from tasks.storage.s3_storage import get_bucket_name, move_s3_file
 
 # Load credentials
 load_dotenv()
@@ -87,6 +76,8 @@ def query_tournaments_to_scrape_task() -> list[dict[str, Any]]:
     Returns:
         List of dicts with tournament_id, url, year, tournament name, and change_type.
     """
+    import duckdb
+
     token = os.environ["MOTHERDUCK_TOKEN"]
     con = duckdb.connect(f"md:infotennis_v2_staging?motherduck_token={token}")
 
@@ -134,6 +125,23 @@ def atp_main_orchestration_flow(year: int | None = None) -> None:
     Args:
         year: Calendar year to process. Defaults to current year.
     """
+    # Deferred imports — keeps cloudpickle happy
+    from tasks.ingestion.get_atp_calendar import (
+        get_atp_results_archive_task,
+        upload_atp_calendar_to_s3_task,
+    )
+    from tasks.ingestion.get_atp_tournament_results import (
+        get_atp_tournament_results_task,
+        upload_atp_tournament_results_to_s3_task,
+    )
+    from tasks.storage.load_atp_calendar_motherduck import (
+        load_atp_calendar_to_motherduck_task,
+    )
+    from tasks.storage.load_atp_tournament_results_motherduck import (
+        load_atp_tournament_results_to_motherduck_task,
+    )
+    from tasks.storage.s3_storage import get_bucket_name, move_s3_file
+
     flow_logger = get_run_logger()
 
     if year is None:
@@ -313,4 +321,5 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    atp_main_orchestration_flow(year=args.year)
+    # atp_main_orchestration_flow(year=args.year)
+    atp_main_orchestration_flow.serve(name="atp-main-orchestration")

@@ -9,7 +9,6 @@ import logging
 import os
 from datetime import datetime, timezone
 
-import boto3
 from prefect import task
 
 import yaml
@@ -23,6 +22,7 @@ def get_config():
 
 def get_s3_client():
     """Create and return an S3 client. Uses AWS env vars automatically."""
+    import boto3
     return boto3.client("s3")
 
 

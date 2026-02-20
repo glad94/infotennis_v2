@@ -4,9 +4,10 @@ MotherDuck Loading Task for infotennis_v2.
 Loads JSON data from S3 into MotherDuck using schema-on-read pattern.
 Implements idempotency by tracking loaded files in a metadata table.
 """
+from __future__ import annotations
+
 import logging
 import os
-import duckdb
 
 import yaml
 
@@ -19,6 +20,8 @@ def get_config():
 
 def get_motherduck_connection():
     """Create and return a MotherDuck connection using env vars."""
+    import duckdb
+
     token = os.getenv("MOTHERDUCK_TOKEN")
     database = get_motherduck_database()
     

@@ -9,6 +9,7 @@ import httpx
 from bs4 import BeautifulSoup
 import logging
 import datetime
+import random
 import yaml
 import os
 

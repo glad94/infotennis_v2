@@ -38,3 +38,58 @@ sources:
             description: "S3 key / filename of the source JSON file"
           - name: meta_file_modified
             description: "Timestamp when the file was retrieved"
+      - name: atp_match_info
+        description: >
+          Raw ATP match info data from the Hawkeye API.
+          Each row is one file load containing data for a single match.
+        columns:
+          - name: data
+            description: "JSON blob with match info payload"
+          - name: meta_file_name
+            description: "S3 key of the source JSON file"
+          - name: meta_file_modified
+            description: "Timestamp when the file was retrieved"
+      - name: atp_key_stats
+        description: >
+          Raw ATP key stats data from the Infosys API.
+          Each row is one file load containing per-set stats for a single match.
+        columns:
+          - name: data
+            description: "JSON blob with encrypted/decrypted key stats payload"
+          - name: meta_file_name
+            description: "S3 key of the source JSON file"
+          - name: meta_file_modified
+            description: "Timestamp when the file was retrieved"
+      - name: atp_stroke_analysis
+        description: >
+          Raw ATP stroke analysis data from the Infosys API.
+          Each row is one file load with forehand/backhand shot outcomes per match.
+        columns:
+          - name: data
+            description: "JSON blob with stroke analysis payload"
+          - name: meta_file_name
+            description: "S3 key of the source JSON file"
+          - name: meta_file_modified
+            description: "Timestamp when the file was retrieved"
+      - name: atp_rally_analysis
+        description: >
+          Raw ATP rally analysis data from the Infosys API.
+          Each row is one file load with point-by-point rally data per match.
+        columns:
+          - name: data
+            description: "JSON blob with rally analysis payload"
+          - name: meta_file_name
+            description: "S3 key of the source JSON file"
+          - name: meta_file_modified
+            description: "Timestamp when the file was retrieved"
+      - name: atp_court_vision
+        description: >
+          Raw ATP court vision data from the Infosys API.
+          Each row is one file load with ball tracking and point-level data per match.
+        columns:
+          - name: data
+            description: "JSON blob with court vision payload (column names encoded)"
+          - name: meta_file_name
+            description: "S3 key of the source JSON file"
+          - name: meta_file_modified
+            description: "Timestamp when the file was retrieved"

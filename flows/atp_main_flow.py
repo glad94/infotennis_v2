@@ -416,6 +416,323 @@ def _resolve_backfill_targets(
     return targets
 
 
+def _resolve_matches_for_tournaments(
+    tournament_ids: list[str], year: int
+) -> list[dict[str, Any]]:
+    """Look up all matches for given tournaments from the staging table.
+
+    Args:
+        tournament_ids: List of ATP tournament IDs.
+        year: Calendar year.
+
+    Returns:
+        List of match dicts suitable for match_data_elt_flow.
+    """
+    import duckdb
+
+    token = os.environ["MOTHERDUCK_TOKEN"]
+    con = duckdb.connect(f"md:infotennis_v2_staging?motherduck_token={token}")
+
+    placeholders = ", ".join(f"'{tid}'" for tid in tournament_ids)
+    rows = con.execute(f"""
+        SELECT
+            year,
+            tournament_id,
+            match_id,
+            round,
+            tournament_name
+        FROM dev.stg_atp_tournament_results
+        WHERE tournament_id IN ({placeholders})
+          AND year = {year}
+          AND match_id IS NOT NULL
+          AND match_id != ''
+    """).fetchall()
+
+    con.close()
+
+    matches = []
+    for row in rows:
+        matches.append({
+            "year": row[0],
+            "tournament_id": row[1],
+            "match_id": row[2],
+            "round": row[3],
+            "tournament_name": row[4],
+        })
+
+    return matches
+
+
+# ═══════════════════════════════════════════════════════════════
+# SUBFLOW 4: Match-Level Data ELT
+# ═══════════════════════════════════════════════════════════════
+
+MATCH_DATA_TYPES = [
+    "match-info",
+    "key-stats",
+    "stroke-analysis",
+    "rally-analysis",
+    "court-vision",
+]
+
+
+@task(name="query_new_matches")
+def query_new_matches_task() -> list[dict[str, Any]]:
+    """Query MotherDuck for newly added matches from stg_atp_tournament_results_new.
+
+    Returns:
+        List of dicts with year, tournament_id, match_id, round,
+        player info, and url for match data retrieval.
+    """
+    import duckdb
+
+    token = os.environ["MOTHERDUCK_TOKEN"]
+    con = duckdb.connect(f"md:infotennis_v2_staging?motherduck_token={token}")
+
+    rows = con.execute("""
+        SELECT
+            year,
+            tournament_id,
+            match_id,
+            round,
+            tournament_name,
+            url
+        FROM dev.stg_atp_tournament_results_new
+        WHERE match_id IS NOT NULL
+          AND match_id != ''
+    """).fetchall()
+
+    con.close()
+
+    matches = []
+    for row in rows:
+        matches.append({
+            "year": row[0],
+            "tournament_id": row[1],
+            "match_id": row[2],
+            "round": row[3],
+            "tournament_name": row[4],
+            "url": row[5],
+        })
+
+    return matches
+
+
+@flow(
+    name="Phase 4: Match Data ELT",
+    description=(
+        "Fetch match-level data (match-info, key-stats, stroke-analysis, "
+        "rally-analysis, court-vision) for new matches, upload to S3, "
+        "load to MotherDuck, and run dbt staging models."
+    ),
+    log_prints=True,
+)
+def match_data_elt_flow(
+    tournament_ids: list[str] | None = None,
+    year: int | None = None,
+    matches_override: list[dict[str, Any]] | None = None,
+) -> None:
+    """Match-level data ELT subflow.
+
+    From the Prefect UI, provide tournament_ids and year to backfill.
+    If neither is supplied, auto-queries stg_atp_tournament_results_new.
+
+    Args:
+        tournament_ids: List of tournament IDs to backfill (UI: add items).
+        year: Year for context (defaults to current year).
+        matches_override: Internal use by parent flow — pre-built match list.
+    """
+    import asyncio
+
+    from tasks.ingestion.get_atp_match_data import (
+        get_atp_match_data_task,
+        upload_atp_match_data_to_s3_task,
+    )
+    from tasks.storage.load_atp_match_data_motherduck import (
+        load_atp_match_data_to_motherduck_task,
+    )
+    from tasks.storage.s3_storage import get_bucket_name
+
+    flow_logger = get_run_logger()
+
+    if year is None:
+        year = datetime.datetime.now().year
+
+    bucket = get_bucket_name()
+
+    # -----------------------------------------------------------
+    # Resolve matches (priority: matches_override > tournament_ids > auto)
+    # -----------------------------------------------------------
+    if matches_override is not None:
+        matches = matches_override
+        flow_logger.info(f"📋 Using {len(matches)} match(es) from parent flow.")
+    elif tournament_ids:
+        flow_logger.info(
+            f"🔍 Backfill mode: looking up all matches for "
+            f"{len(tournament_ids)} tournament(s) in {year}..."
+        )
+        matches = _resolve_matches_for_tournaments(tournament_ids, year)
+    else:
+        flow_logger.info("🔍 No inputs supplied. Querying new matches...")
+        matches = query_new_matches_task()
+
+    if not matches:
+        flow_logger.info("ℹ️ No matches to process.")
+        return
+
+    flow_logger.info(f"📋 Processing {len(matches)} match(es) × {len(MATCH_DATA_TYPES)} data types:")
+    for m in matches[:10]:  # Show first 10
+        flow_logger.info(
+            f"  - {m.get('tournament_name', '?')} {m['tournament_id']}/"
+            f"{m['match_id']} ({m.get('round', '?')})"
+        )
+    if len(matches) > 10:
+        flow_logger.info(f"  ... and {len(matches) - 10} more")
+
+    # -----------------------------------------------------------
+    # Fetch + upload to S3 (async, max 15 concurrent requests)
+    # -----------------------------------------------------------
+    MAX_CONCURRENT = 15
+    loaded_combos: dict[str, set[str]] = {dt: set() for dt in MATCH_DATA_TYPES}
+    success_count = 0
+    fail_count = 0
+
+    def _safe_log(msg: str) -> str:
+        """Sanitise log messages to avoid UnicodeDecodeError in Prefect."""
+        return msg.encode("ascii", errors="replace").decode("ascii")
+
+    async def _fetch_and_upload_one(
+        sem: asyncio.Semaphore,
+        m: dict,
+        data_type: str,
+        results: list,
+    ) -> None:
+        """Fetch a single data type for one match and upload to S3.
+
+        Args:
+            sem: Semaphore limiting concurrency.
+            m: Match dict with year, tournament_id, match_id.
+            data_type: One of the MATCH_DATA_TYPES.
+            results: Shared list to accumulate (success, data_type, tourn_id).
+        """
+        m_year = m.get("year", year)
+        tourn_id = m["tournament_id"]
+        match_id = m["match_id"]
+        label = f"{tourn_id}/{match_id}"
+
+        async with sem:
+            try:
+                data = await get_atp_match_data_task.fn(
+                    year=m_year,
+                    tourn_id=tourn_id,
+                    match_id=match_id,
+                    data_type=data_type,
+                )
+
+                if not data or not data.get("data"):
+                    flow_logger.warning(
+                        _safe_log(f"  No {data_type} data for {label}. Skipping.")
+                    )
+                    results.append((False, data_type, tourn_id))
+                    return
+
+                # S3 upload is synchronous — fine inside the semaphore
+                s3_uri = upload_atp_match_data_to_s3_task.fn(
+                    data=data,
+                    year=m_year,
+                    tourn_id=tourn_id,
+                    match_id=match_id,
+                    data_type=data_type,
+                )
+                flow_logger.info(
+                    _safe_log(f"  {data_type} {label} -> {s3_uri}")
+                )
+                results.append((True, data_type, tourn_id))
+
+            except Exception as e:
+                flow_logger.error(
+                    _safe_log(f"  {data_type} failed for {label}: {e}")
+                )
+                results.append((False, data_type, tourn_id))
+
+            # Brief random pause to be respectful
+            await asyncio.sleep(0.5)
+
+    async def _fetch_all() -> list:
+        """Run all fetch+upload tasks concurrently with a semaphore."""
+        sem = asyncio.Semaphore(MAX_CONCURRENT)
+        results: list = []
+        tasks = []
+        for m in matches:
+            for data_type in MATCH_DATA_TYPES:
+                tasks.append(
+                    _fetch_and_upload_one(sem, m, data_type, results)
+                )
+        flow_logger.info(
+            f"Dispatching {len(tasks)} async tasks "
+            f"(max {MAX_CONCURRENT} concurrent)..."
+        )
+        await asyncio.gather(*tasks)
+        return results
+
+    # Run the async event loop
+    results = asyncio.run(_fetch_all())
+
+    for ok, dt, tid in results:
+        if ok:
+            loaded_combos[dt].add(tid)
+            success_count += 1
+        else:
+            fail_count += 1
+
+    flow_logger.info(
+        f"\nFetch summary: {success_count} succeeded, {fail_count} failed"
+    )
+
+    # -----------------------------------------------------------
+    # Load to MotherDuck (per data_type × per tournament)
+    # -----------------------------------------------------------
+    flow_logger.info("\n🦆 Loading to MotherDuck...")
+
+    for data_type, tourn_ids in loaded_combos.items():
+        if not tourn_ids:
+            continue
+
+        config_key = data_type.replace("-", "_")
+        for tourn_id in tourn_ids:
+            pattern = f"raw/{config_key}/year={year}/tourn={tourn_id}"
+            try:
+                load_atp_match_data_to_motherduck_task(
+                    bucket=bucket,
+                    pattern=pattern,
+                    data_type=data_type,
+                )
+                flow_logger.info(
+                    f"  ✅ Loaded {data_type} for tourn={tourn_id}"
+                )
+            except Exception as e:
+                flow_logger.error(
+                    f"  ❌ Failed to load {data_type} for tourn={tourn_id}: {e}"
+                )
+
+    # -----------------------------------------------------------
+    # Transform: run dbt staging models
+    # -----------------------------------------------------------
+    flow_logger.info("\n🔄 Running dbt match data staging models...")
+    run_dbt_models_task(
+        select=(
+            "stg_atp_match_info stg_atp_key_stats "
+            "stg_atp_stroke_analysis stg_atp_rally_analysis "
+            "stg_atp_court_vision"
+        )
+    )
+
+    flow_logger.info(
+        f"🎉 Match Data ELT complete. "
+        f"{success_count} data files processed across {len(matches)} matches."
+    )
+
+
 # ═══════════════════════════════════════════════════════════════
 # PARENT ORCHESTRATION FLOW
 # ═══════════════════════════════════════════════════════════════
@@ -425,13 +742,14 @@ def _resolve_backfill_targets(
     name="ATP Main Orchestration Pipeline",
     description=(
         "End-to-end pipeline: Calendar ELT → Determine targets → "
-        "Tournament Results ELT. Calls each phase as a subflow."
+        "Tournament Results ELT → Match Data ELT. "
+        "Calls each phase as a subflow."
     ),
     retries=0,
     log_prints=True,
 )
 def atp_main_orchestration_flow(year: int | None = None) -> None:
-    """Main orchestration flow chaining all three phases as subflows.
+    """Main orchestration flow chaining all four phases as subflows.
 
     Args:
         year: Calendar year to process. Defaults to current year.
@@ -458,6 +776,9 @@ def atp_main_orchestration_flow(year: int | None = None) -> None:
     # Phase 3: Tournament Results ELT (subflow)
     tournament_results_elt_flow(targets=targets, year=year)
 
+    # Phase 4: Match Data ELT (subflow)
+    match_data_elt_flow(year=year)
+
     flow_logger.info(f"\n{'='*60}")
     flow_logger.info("🎉 ATP Main Pipeline Complete!")
     flow_logger.info(f"{'='*60}")
@@ -483,5 +804,14 @@ if __name__ == "__main__":
     results_deploy = tournament_results_elt_flow.to_deployment(
         name="atp-tournament-results-elt",
     )
+    match_data_deploy = match_data_elt_flow.to_deployment(
+        name="atp-match-data-elt",
+    )
 
-    serve(main_deploy, calendar_deploy, targets_deploy, results_deploy)
+    serve(
+        main_deploy,
+        calendar_deploy,
+        targets_deploy,
+        results_deploy,
+        match_data_deploy,
+    )

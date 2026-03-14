@@ -25,7 +25,11 @@ s3:
     atp_results_archive: "raw/atp_results_archive/incoming/year=%(year)s/atp_calendar_%(year)s_%(timestamp)s.json"
     atp_tournaments: "raw/atp_tournaments/incoming/year=%(year)s/atp_tournaments_%(year)s_%(timestamp)s.json"
     atp_tournament: "raw/atp_tournament/year=%(year)s/tourn=%(tournament_id)s/atp_tournament_results_%(year)s_%(tournament_id)s_%(timestamp)s.json"
-    match_stats: "raw/match-stats/year=%(year)s/tourn=%(tourn_id)s/%(filename)s"
+    match_info: "raw/match_info/year=%(year)s/tourn=%(tourn_id)s/%(match_id)s_%(timestamp)s.json"
+    key_stats: "raw/key_stats/year=%(year)s/tourn=%(tourn_id)s/%(match_id)s_%(timestamp)s.json"
+    stroke_analysis: "raw/stroke_analysis/year=%(year)s/tourn=%(tourn_id)s/%(match_id)s_%(timestamp)s.json"
+    rally_analysis: "raw/rally_analysis/year=%(year)s/tourn=%(tourn_id)s/%(match_id)s_%(timestamp)s.json"
+    court_vision: "raw/court_vision/year=%(year)s/tourn=%(tourn_id)s/%(match_id)s_%(timestamp)s.json"
 
 # MotherDuck
 motherduck:
@@ -34,3 +38,8 @@ motherduck:
     atp_results_archive: "atp_calendar_test"
     atp_tournaments: "atp_tournaments"
     atp_tournament_results: "atp_tournament_results"
+    match_info: "atp_match_info"
+    key_stats: "atp_key_stats"
+    stroke_analysis: "atp_stroke_analysis"
+    rally_analysis: "atp_rally_analysis"
+    court_vision: "atp_court_vision"

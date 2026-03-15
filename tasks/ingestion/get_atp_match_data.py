@@ -74,60 +74,104 @@ def decode_infosys_data(data):
     return json.loads(decoded_str.replace(decoded_str[-1], ""))
 
 @task(name="get_atp_match_data")
-@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
-async def get_atp_match_data_task(year: int, tourn_id: str, match_id: str, data_type: str) -> Dict[str, Any]:
-    """
-    Retrieves match-level data (stats or info) from ATP/Infosys asynchronously.
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+    reraise=True,
+)
+async def get_atp_match_data_task(
+    year: int, tourn_id: str, match_id: str, data_type: str
+) -> Dict[str, Any]:
+    """Retrieve match-level data from ATP/Infosys asynchronously.
+
+    Args:
+        year: Tournament year.
+        tourn_id: ATP tournament identifier.
+        match_id: ATP match identifier.
+        data_type: One of match-info, key-stats, rally-analysis,
+                   stroke-analysis, court-vision.
+
+    Returns:
+        Dict with 'metadata' and 'data' keys, or empty dict on failure.
     """
     logger = logging.getLogger("get_atp_match_data")
     config = get_config()
     match_id_upper = str(match_id).upper()
-    
+
     # Select endpoint and URL
     if data_type == "match-info":
         url_template = config['atp']['hawkeye_url_template']
-        url = url_template % {'year': year, 'tourn_id': tourn_id, 'match_id': match_id_upper}
+        url = url_template % {
+            'year': year, 'tourn_id': tourn_id, 'match_id': match_id_upper
+        }
         need_decode = False
     else:
-        # Infosys endpoints (key-stats, rally-analysis, etc.)
-        base_url = config['infosys']['base_url']
+        # Infosys endpoints — full URLs in config, just substitute params
         endpoints = config['infosys']['endpoints']
         if data_type not in endpoints:
             raise ValueError(f"Unknown match data_type: {data_type}")
         url = endpoints[data_type] % {
-            'base_url': base_url,
             'year': year,
             'tourn_id': tourn_id,
-            'match_id': match_id_upper
+            'match_id': match_id_upper,
         }
         need_decode = True
 
     headers = {"User-Agent": get_random_user_agent()}
-    logger.info(f"Fetching {data_type} from {url}")
 
     try:
         async with httpx.AsyncClient(timeout=20, follow_redirects=True) as client:
             resp = await client.get(url, headers=headers)
             resp.raise_for_status()
-            
+
             if need_decode:
-                # Decrypt Infosys data
                 results_json = resp.json()
                 match_payload = decode_infosys_data(results_json)
             else:
-                # Direct JSON from Hawkeye
                 match_payload = resp.json()
-            
+
             retrieved_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
             return {
-                "metadata": {
-                    "retrieved_at": retrieved_at
-                },
-                "data": match_payload
+                "metadata": {"retrieved_at": retrieved_at},
+                "data": match_payload,
             }
-                
+
+    except httpx.HTTPStatusError as e:
+        status = e.response.status_code
+        if status == 404:
+            reason = f"HTTP 404 Not Found — no {data_type} data exists"
+        elif status == 403:
+            reason = f"HTTP 403 Forbidden — access denied"
+        elif status == 429:
+            reason = f"HTTP 429 Too Many Requests — rate limited"
+        elif status >= 500:
+            reason = f"HTTP {status} Server Error"
+        else:
+            reason = f"HTTP {status}"
+        logger.error(
+            f"{data_type} {year}/{tourn_id}/{match_id_upper}: {reason} ({url})"
+        )
+        raise
+
+    except httpx.TimeoutException:
+        logger.error(
+            f"{data_type} {year}/{tourn_id}/{match_id_upper}: "
+            f"Request timed out after 20s ({url})"
+        )
+        raise
+
+    except httpx.ConnectError as e:
+        logger.error(
+            f"{data_type} {year}/{tourn_id}/{match_id_upper}: "
+            f"Connection failed — {e} ({url})"
+        )
+        raise
+
     except Exception as e:
-        logger.error(f"Failed to get {data_type} for {year}/{tourn_id}/{match_id}: {e}")
+        logger.error(
+            f"{data_type} {year}/{tourn_id}/{match_id_upper}: "
+            f"{type(e).__name__}: {e} ({url})"
+        )
         raise
                 
 from tasks.storage.s3_storage import upload_json_to_s3, get_bucket_name

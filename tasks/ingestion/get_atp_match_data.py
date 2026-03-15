@@ -217,11 +217,49 @@ def upload_atp_match_data_to_s3_task(
     if config_key is None:
         raise ValueError(f"Unknown data_type: {data_type}")
 
+    # Extract player names for the filename
+    match_name = "MATCH"
+    try:
+        p1, p2 = "P1", "P2"
+        payload = data.get("data", {})
+        if data_type == "match-info":
+            m_data = payload.get("Match", {})
+            p1_dict = m_data.get("Player1", {})
+            p2_dict = m_data.get("Player2", {})
+            p1 = p1_dict.get("PlayerLastName", p1_dict.get("PlayerFirstName", "P1"))
+            p2 = p2_dict.get("PlayerLastName", p2_dict.get("PlayerFirstName", "P2"))
+        elif data_type in ["key-stats", "stroke-analysis", "court-vision"]:
+            players = payload.get("players", [])
+            if len(players) > 0:
+                p1 = players[0].get("player1Name", "P1")
+            if len(players) > 1:
+                # The API oddly uses "player1Name" for the 2nd player too
+                p2 = players[1].get("player1Name", "P2")
+        elif data_type == "rally-analysis":
+            players = payload.get("playerDetails", [])
+            if len(players) > 0:
+                p1 = players[0].get("player1Name", "P1")
+            if len(players) > 1:
+                p2 = players[1].get("player1Name", "P2")
+        
+        # Clean and format names (e.g., "D. MEDVEDEV" -> "D-MEDVEDEV")
+        import re
+        def _c(name):
+            if not name: return "UNKNOWN"
+            res = re.sub(r'[^a-zA-Z0-9]+', '-', str(name)).strip('-').title()
+            return res
+        
+        match_name = f"{_c(p1)}-vs-{_c(p2)}"
+    except Exception as e:
+        import logging
+        logging.getLogger("get_atp_match_data").warning(f"Failed to extract match_name: {e}")
+
     key_template = config["s3"]["paths"][config_key]
     key = key_template % {
         "year": year,
         "tourn_id": tourn_id,
         "match_id": str(match_id).upper(),
+        "match_name": match_name,
         "timestamp": ts_str,
     }
 

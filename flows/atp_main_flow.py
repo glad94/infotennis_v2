@@ -529,6 +529,7 @@ def query_new_matches_task() -> list[dict[str, Any]]:
 )
 def match_data_elt_flow(
     tournament_ids: list[str] | None = None,
+    data_types: list[str] | None = None,
     year: int | None = None,
     matches_override: list[dict[str, Any]] | None = None,
 ) -> None:
@@ -539,6 +540,9 @@ def match_data_elt_flow(
 
     Args:
         tournament_ids: List of tournament IDs to backfill (UI: add items).
+        data_types: List of stat types to collect (UI: add items).
+            Valid values: match-info, key-stats, stroke-analysis,
+            rally-analysis, court-vision. Defaults to all 5.
         year: Year for context (defaults to current year).
         matches_override: Internal use by parent flow — pre-built match list.
     """
@@ -557,6 +561,18 @@ def match_data_elt_flow(
 
     if year is None:
         year = datetime.datetime.now().year
+
+    # Resolve which data types to fetch
+    if data_types:
+        invalid = [dt for dt in data_types if dt not in MATCH_DATA_TYPES]
+        if invalid:
+            raise ValueError(
+                f"Invalid data_types: {invalid}. "
+                f"Valid values: {MATCH_DATA_TYPES}"
+            )
+        active_types = data_types
+    else:
+        active_types = MATCH_DATA_TYPES
 
     bucket = get_bucket_name()
 
@@ -580,7 +596,7 @@ def match_data_elt_flow(
         flow_logger.info("ℹ️ No matches to process.")
         return
 
-    flow_logger.info(f"📋 Processing {len(matches)} match(es) × {len(MATCH_DATA_TYPES)} data types:")
+    flow_logger.info(f"📋 Processing {len(matches)} match(es) x {len(active_types)} data types: {active_types}")
     for m in matches[:10]:  # Show first 10
         flow_logger.info(
             f"  - {m.get('tournament_name', '?')} {m['tournament_id']}/"
@@ -593,14 +609,34 @@ def match_data_elt_flow(
     # Fetch + upload to S3 (async, max 15 concurrent requests)
     # -----------------------------------------------------------
     MAX_CONCURRENT = 15
-    loaded_combos: dict[str, set[str]] = {dt: set() for dt in MATCH_DATA_TYPES}
-    success_count = 0
-    fail_count = 0
+    loaded_combos: dict[str, set[str]] = {dt: set() for dt in active_types}
 
     def _safe_log(msg: str) -> str:
         """Sanitise log messages to avoid UnicodeDecodeError in Prefect."""
         return msg.encode("ascii", errors="replace").decode("ascii")
 
+    def _error_reason(e: Exception) -> str:
+        """Extract a human-readable error reason from an exception."""
+        import httpx as _httpx
+
+        if isinstance(e, _httpx.HTTPStatusError):
+            code = e.response.status_code
+            if code == 404:
+                return "404 Not Found"
+            elif code == 403:
+                return "403 Forbidden"
+            elif code == 429:
+                return "429 Rate Limited"
+            elif code >= 500:
+                return f"{code} Server Error"
+            return f"HTTP {code}"
+        if isinstance(e, _httpx.TimeoutException):
+            return "Timeout"
+        if isinstance(e, _httpx.ConnectError):
+            return "Connection Failed"
+        return f"{type(e).__name__}"
+
+    # Results: list of (ok: bool, data_type, tourn_id, match_id, error_reason)
     async def _fetch_and_upload_one(
         sem: asyncio.Semaphore,
         m: dict,
@@ -613,7 +649,7 @@ def match_data_elt_flow(
             sem: Semaphore limiting concurrency.
             m: Match dict with year, tournament_id, match_id.
             data_type: One of the MATCH_DATA_TYPES.
-            results: Shared list to accumulate (success, data_type, tourn_id).
+            results: Shared list to accumulate result tuples.
         """
         m_year = m.get("year", year)
         tourn_id = m["tournament_id"]
@@ -633,7 +669,7 @@ def match_data_elt_flow(
                     flow_logger.warning(
                         _safe_log(f"  No {data_type} data for {label}. Skipping.")
                     )
-                    results.append((False, data_type, tourn_id))
+                    results.append((False, data_type, tourn_id, match_id, "No data"))
                     return
 
                 # S3 upload is synchronous — fine inside the semaphore
@@ -647,13 +683,16 @@ def match_data_elt_flow(
                 flow_logger.info(
                     _safe_log(f"  {data_type} {label} -> {s3_uri}")
                 )
-                results.append((True, data_type, tourn_id))
+                results.append((True, data_type, tourn_id, match_id, None))
 
             except Exception as e:
+                reason = _error_reason(e)
                 flow_logger.error(
-                    _safe_log(f"  {data_type} failed for {label}: {e}")
+                    _safe_log(
+                        f"  {data_type} failed for {label}: {reason} - {e}"
+                    )
                 )
-                results.append((False, data_type, tourn_id))
+                results.append((False, data_type, tourn_id, match_id, reason))
 
             # Brief random pause to be respectful
             await asyncio.sleep(0.5)
@@ -664,7 +703,7 @@ def match_data_elt_flow(
         results: list = []
         tasks = []
         for m in matches:
-            for data_type in MATCH_DATA_TYPES:
+            for data_type in active_types:
                 tasks.append(
                     _fetch_and_upload_one(sem, m, data_type, results)
                 )
@@ -678,16 +717,47 @@ def match_data_elt_flow(
     # Run the async event loop
     results = asyncio.run(_fetch_all())
 
-    for ok, dt, tid in results:
+    # -----------------------------------------------------------
+    # Tally results and build summary
+    # -----------------------------------------------------------
+    success_count = 0
+    fail_count = 0
+    # Per (data_type, tourn_id) tallies
+    summary: dict[tuple[str, str], dict[str, int]] = {}
+    error_details: dict[tuple[str, str], dict[str, int]] = {}
+
+    for ok, dt, tid, mid, reason in results:
+        key = (dt, tid)
+        if key not in summary:
+            summary[key] = {"ok": 0, "fail": 0}
+            error_details[key] = {}
         if ok:
             loaded_combos[dt].add(tid)
+            summary[key]["ok"] += 1
             success_count += 1
         else:
+            summary[key]["fail"] += 1
             fail_count += 1
+            if reason:
+                error_details[key][reason] = error_details[key].get(reason, 0) + 1
 
+    # Print the summary table
     flow_logger.info(
-        f"\nFetch summary: {success_count} succeeded, {fail_count} failed"
+        f"\n{'='*70}\n"
+        f" FETCH SUMMARY: {success_count} succeeded, {fail_count} failed\n"
+        f"{'='*70}"
     )
+    flow_logger.info(
+        f"{'Data Type':<20s} {'Tournament':<12s} {'OK':>5s} {'Fail':>5s}  Errors"
+    )
+    flow_logger.info("-" * 70)
+    for (dt, tid), counts in sorted(summary.items()):
+        errs = error_details.get((dt, tid), {})
+        err_str = ", ".join(f"{r}: {c}" for r, c in sorted(errs.items())) if errs else ""
+        flow_logger.info(
+            f"{dt:<20s} {tid:<12s} {counts['ok']:>5d} {counts['fail']:>5d}  {err_str}"
+        )
+    flow_logger.info("-" * 70)
 
     # -----------------------------------------------------------
     # Load to MotherDuck (per data_type × per tournament)
@@ -718,14 +788,17 @@ def match_data_elt_flow(
     # -----------------------------------------------------------
     # Transform: run dbt staging models
     # -----------------------------------------------------------
-    flow_logger.info("\n🔄 Running dbt match data staging models...")
-    run_dbt_models_task(
-        select=(
-            "stg_atp_match_info stg_atp_key_stats "
-            "stg_atp_stroke_analysis stg_atp_rally_analysis "
-            "stg_atp_court_vision"
-        )
-    )
+    # Build dbt select for only the active data types
+    _dbt_model_map = {
+        "match-info": "stg_atp_match_info",
+        "key-stats": "stg_atp_key_stats",
+        "stroke-analysis": "stg_atp_stroke_analysis",
+        "rally-analysis": "stg_atp_rally_analysis",
+        "court-vision": "stg_atp_court_vision",
+    }
+    dbt_select = " ".join(_dbt_model_map[dt] for dt in active_types)
+    flow_logger.info(f"\n🔄 Running dbt staging models: {dbt_select}")
+    run_dbt_models_task(select=dbt_select)
 
     flow_logger.info(
         f"🎉 Match Data ELT complete. "

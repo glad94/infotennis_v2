@@ -9,12 +9,11 @@ atp:
 
 # Infosys Match Stats API
 infosys:
-  base_url: "https://itp-atp-sls.infosys-platforms.com/static/prod/stats-plus"
   endpoints:
-    key-stats: "%(base_url)s/%(year)s/%(tourn_id)s/%(match_id)s/keystats.json"
-    rally-analysis: "%(base_url)s/%(year)s/%(tourn_id)s/%(match_id)s/rally-analysis.json"
-    stroke-analysis: "%(base_url)s/%(year)s/%(tourn_id)s/%(match_id)s/stroke-analysis.json"
-    court-vision: "%(base_url)s/%(year)s/%(tourn_id)s/%(match_id)s/courtvision.json"
+    key-stats: "https://itp-atp-sls.infosys-platforms.com/static/prod/stats-plus/%(year)s/%(tourn_id)s/%(match_id)s/keystats.json"
+    rally-analysis: "https://itp-atp-sls.infosys-platforms.com/static/prod/rally-analysis/%(year)s/%(tourn_id)s/%(match_id)s/data.json"
+    stroke-analysis: "https://itp-atp-sls.infosys-platforms.com/static/prod/stroke-analysis/v2/%(year)s/%(tourn_id)s/%(match_id)s/data.json"
+    court-vision: "https://itp-atp-sls.infosys-platforms.com/static/prod/court-vision/%(year)s/%(tourn_id)s/%(match_id)s/data.json"
 
 # S3 Storage
 s3:

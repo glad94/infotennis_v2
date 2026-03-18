@@ -86,7 +86,7 @@ def query_tournaments_to_scrape_task() -> list[dict[str, Any]]:
 
     rows = con.execute("""
         SELECT year, tournament, tournament_id, url, change_type
-        FROM dev.stg_atp_calendar_changes_test
+        FROM dev.stg_atp_calendar_changes
     """).fetchall()
 
     con.close()
@@ -173,7 +173,7 @@ def calendar_elt_flow(year: int | None = None) -> None:
     # 4. Transform
     flow_logger.info("🔄 Running dbt calendar models...")
     run_dbt_models_task(
-        select="stg_atp_calendar_test stg_atp_calendar_changes_test"
+        select="stg_atp_calendar stg_atp_calendar_changes"
     )
 
     flow_logger.info("🎉 Calendar ELT complete.")
@@ -186,7 +186,7 @@ def calendar_elt_flow(year: int | None = None) -> None:
 
 @flow(
     name="Phase 2: Query Targets",
-    description="Query stg_atp_calendar_changes_test to identify tournaments needing results.",
+    description="Query stg_atp_calendar_changes to identify tournaments needing results.",
     log_prints=True,
 )
 def query_targets_flow() -> list[dict[str, Any]]:
@@ -391,7 +391,7 @@ def _resolve_backfill_targets(
     placeholders = ", ".join(f"'{tid}'" for tid in tournament_ids)
     rows = con.execute(f"""
         SELECT DISTINCT year, tournament, tournament_id, url
-        FROM dev.stg_atp_calendar_test
+        FROM dev.stg_atp_calendar
         WHERE tournament_id IN ({placeholders})
           AND year = {year}
           AND url IS NOT NULL

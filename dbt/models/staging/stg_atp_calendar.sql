@@ -10,7 +10,7 @@ with raw as (
         data::json as data,
         meta_file_name,
         meta_file_modified
-    from {{ source('infotennis_v2_raw', 'atp_calendar_test') }}
+    from {{ source('infotennis_v2_raw', 'atp_calendar') }}
 
 ),
 

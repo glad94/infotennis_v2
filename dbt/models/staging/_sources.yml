@@ -5,7 +5,7 @@ sources:
     database: infotennis_v2_raw
     schema: main
     tables:
-      - name: atp_calendar_test
+      - name: atp_calendar
         description: >
           Raw ATP calendar data loaded from S3 JSON files.
           Each row represents one file load containing the full calendar as a JSON blob.

@@ -34,7 +34,7 @@ s3:
 motherduck:
   default_database: "infotennis_v2_raw"
   tables:
-    atp_results_archive: "atp_calendar_test"
+    atp_results_archive: "atp_calendar"
     atp_tournaments: "atp_tournaments"
     atp_tournament_results: "atp_tournament_results"
     match_info: "atp_match_info"

@@ -20,14 +20,14 @@ with file_versions as (
     select distinct
         meta_file_modified,
         dense_rank() over (order by meta_file_modified desc) as version_rank
-    from {{ ref('stg_atp_calendar_test') }}
+    from {{ ref('stg_atp_calendar') }}
 
 ),
 
 current_version as (
 
     select cal.*
-    from {{ ref('stg_atp_calendar_test') }} as cal
+    from {{ ref('stg_atp_calendar') }} as cal
     inner join file_versions as fv
         on cal.meta_file_modified = fv.meta_file_modified
     where fv.version_rank = 1
@@ -37,7 +37,7 @@ current_version as (
 previous_version as (
 
     select cal.*
-    from {{ ref('stg_atp_calendar_test') }} as cal
+    from {{ ref('stg_atp_calendar') }} as cal
     inner join file_versions as fv
         on cal.meta_file_modified = fv.meta_file_modified
     where fv.version_rank = 2

@@ -1,10 +1,10 @@
 version: 2
 
 models:
-  - name: stg_atp_calendar_test
+  - name: stg_atp_calendar
     description: >
       Flattened ATP calendar data. Each row is one tournament from one file version.
-      Parsed from the raw JSON blob in infotennis_v2_raw.atp_calendar_test.
+      Parsed from the raw JSON blob in infotennis_v2_raw.atp_calendar.
     columns:
       - name: tournament_id
         description: "ATP tournament identifier"
@@ -38,7 +38,7 @@ models:
       - unique:
           column_name: "tournament_id || '|' || meta_file_modified"
 
-  - name: stg_atp_calendar_changes_test
+  - name: stg_atp_calendar_changes
     description: >
       Tournaments that need results scraped: either newly completed (url null->non-null)
       or currently ongoing (url contains '/current/').
@@ -133,31 +133,44 @@ models:
 
   - name: stg_atp_match_info
     description: >
-      Staging view for ATP Match Info (Hawkeye API).
-      Each row = one match's info payload. Match ID derived from S3 file path.
+      Staging model for ATP Match Info (Hawkeye API).
+      Data is completely flattened from the Match structure out to the granularity of a single row per match.
     columns:
-      - name: retrieved_at
-        description: "UTC timestamp when the data was scraped"
-      - name: match_data
-        description: "Full Hawkeye match info JSON payload"
-      - name: meta_file_name
-        description: "S3 key of the source file"
-      - name: meta_file_modified
-        description: "Retrieved timestamp from wrapper metadata"
+      - name: match_id
+        description: "Formatted Match ID parsed from file name"
+        tests:
+          - not_null
+      - name: year
+        description: "Year of the tournament"
+      - name: tournament_id
+        description: "Tournament ID"
 
   - name: stg_atp_key_stats
     description: >
       Staging view for ATP Key Stats (Infosys API).
-      Extracts sets_completed, players array, and per-set stats JSON.
+      Flattened to have one row per match set, extracting individual statistics by name (e.g. Aces, Winners) into explicit columns.
     columns:
-      - name: retrieved_at
-        description: "UTC timestamp when the data was scraped"
-      - name: sets_completed
-        description: "Number of sets played in the match"
-      - name: players
-        description: "JSON array with player IDs"
-      - name: set_stats
-        description: "JSON object with per-set stat breakdowns (set0, set1, ...)"
+      - name: match_id
+        description: "Formatted Match ID parsed from file name"
+        tests:
+          - not_null
+      - name: set_number
+        description: "Set index (0 = Match summary, 1-5 = Sets 1-5)"
+
+  - name: stg_atp_stroke_analysis
+    description: >
+      Staging view for ATP Stroke Analysis (Infosys API).
+      Unnested point-level data. Every row is one point recorded in the `rallyShots.allPoints` array.
+      
+  - name: stg_atp_rally_analysis
+    description: >
+      Staging view for ATP Rally Analysis (Infosys API).
+      Unnested point-level data segmented first by shot_group and outcome_type.
+      
+  - name: stg_atp_court_vision
+    description: >
+      Staging view for ATP Court Vision (Infosys API).
+      Points-level data unnested from the `a50` Dictionary. Keeps variables encoded as `a<numeric>` formats.
       - name: meta_file_name
         description: "S3 key of the source file"
       - name: meta_file_modified

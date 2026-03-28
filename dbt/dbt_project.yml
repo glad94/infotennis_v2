@@ -15,3 +15,6 @@ models:
   infotennis_v2:
     staging:
       +materialized: view
+    entity:
+      +materialized: table
+      +database: infotennis_v2_entity

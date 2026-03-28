@@ -1,0 +1,54 @@
+version: 2
+
+models:
+  - name: fct_atp_calendar
+    description: >
+      Entity fact table for the complete ATP calendar.
+      Deduplicates tournaments to the most recently scraped record for each year + tournament_id combination.
+      Parses full date strings into concrete start_date and end_date columns.
+    columns:
+      - name: year
+        description: "Tournament year"
+      - name: tournament_id
+        description: "ATP unique tournament identifier"
+      - name: start_date
+        description: "Starting date of the tournament"
+      - name: end_date
+        description: "Ending date of the tournament"
+    tests:
+      - unique:
+          column_name: "year || '|' || tournament_id"
+
+  - name: fct_atp_tournament_results
+    description: >
+      Entity fact table for match results across all tournaments.
+      Inherits the deduplication of staging layer but focuses only on business logic keys and metric tracking.
+    columns:
+      - name: year
+        description: "Year of the tournament"
+      - name: tournament_id
+        description: "ATP tournament identifier"
+      - name: match_id
+        description: "Standardized match identifier"
+    tests:
+      - unique:
+          column_name: "year || '|' || tournament_id || '|' || match_id"
+
+  - name: fct_atp_key_stats
+    description: >
+      Incremental entity fact table for detailed point, serve, and break metrics per match-set.
+      Extracts deeply embedded strings ("30/51 (59%)") into native analytical metrics (`_won`, `_played`, `_pct`).
+      Includes derived metrics native to the Python processing engine such as `break_points_faced` and cross-references opponent serving values to deduce return points for Grand Slams.
+      Only inserts rows where `meta_file_modified` is newer than the latest currently tracked.
+    columns:
+      - name: match_id
+        description: "ATP match identifier"
+      - name: set_number
+        description: "Set index (0 for Match Overall, 1-5 for specific sets)"
+      - name: meta_file_modified
+        description: "Tracking timestamp utilized for incremental pipeline load"
+    tests:
+      - unique:
+          column_name: "year || '|' || tournament_id || '|' || match_id || '|' || set_number"
+
+  

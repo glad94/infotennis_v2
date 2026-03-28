@@ -50,5 +50,22 @@ models:
     tests:
       - unique:
           column_name: "year || '|' || tournament_id || '|' || match_id || '|' || set_number"
-
-  
+  - name: fct_atp_stroke_analysis
+    description: >
+      Entity fact table for point-level stroke analysis data.
+      Classifies point_end_type into outcome categories (winner, forced_error, unforced_error, etc.),
+      extracts game/point from point_id, and deduplicates to the latest file version per match point.
+    columns:
+      - name: match_id
+        description: "ATP match identifier"
+      - name: point_id
+        description: "Unique point identifier within a match (format: set_game_point)"
+      - name: outcome_category
+        description: "Classified outcome: winner, forced_error, unforced_error, double_fault, ace, or other"
+      - name: hand
+        description: "Forehand or backhand"
+      - name: shot_type
+        description: "Type of shot played"
+    tests:
+      - unique:
+          column_name: "year || '|' || tournament_id || '|' || match_id || '|' || point_id"

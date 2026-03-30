@@ -87,3 +87,73 @@ models:
     tests:
       - unique:
           column_name: "year || '|' || tournament_id || '|' || match_id || '|' || point_id || '|' || coalesce(cast(stroke_idx as varchar), '0')"
+
+  - name: dim_atp_players
+    description: >
+      Dimension table of ATP players derived from key stats and tournament results staging models.
+      Contains unique player records with ID, name (full/first/last), and country.
+    columns:
+      - name: player_id
+        description: "Unique ATP player identifier"
+        tests:
+          - unique
+          - not_null
+      - name: player_name
+        description: "Full display name"
+      - name: first_name
+        description: "First name (from key stats)"
+      - name: last_name
+        description: "Last name (from key stats)"
+      - name: country
+        description: "Country code (3-letter ISO)"
+
+  - name: dim_atp_tournaments
+    description: >
+      Dimension table of ATP tournaments per year, combining calendar data
+      (category, city, country, dates, winners) with tournaments API metadata
+      (surface, draw sizes, prize money, indoor/outdoor).
+    columns:
+      - name: year
+        description: "Calendar year of the tournament edition"
+      - name: tournament_id
+        description: "Unique ATP tournament identifier"
+      - name: tournament_name
+        description: "Official tournament name"
+      - name: category
+        description: "Tournament category (Grand Slam, ATP 1000, etc.)"
+      - name: surface
+        description: "Playing surface (Clay, Hard, Grass, etc.)"
+      - name: indoor_outdoor
+        description: "Whether the event is played indoors or outdoors"
+      - name: total_financial_commitment
+        description: "Total prize money commitment"
+      - name: singles_draw_size
+        description: "Number of players in the singles draw"
+    tests:
+      - unique:
+          column_name: "year || '|' || tournament_id"
+
+  - name: dim_atp_matches
+    description: >
+      Dimension table of ATP matches. One row per match with player info,
+      round, score, result, duration, and umpire.
+    columns:
+      - name: year
+        description: "Calendar year"
+      - name: tournament_id
+        description: "Tournament identifier"
+      - name: match_id
+        description: "Match identifier"
+      - name: round
+        description: "Tournament round (R128, R64, R32, R16, QF, SF, F)"
+      - name: score
+        description: "Match score string"
+      - name: winner_id
+        description: "Player ID of the match winner"
+      - name: sets_completed
+        description: "Number of sets completed in the match"
+      - name: duration_total
+        description: "Total match duration"
+    tests:
+      - unique:
+          column_name: "year || '|' || tournament_id || '|' || match_id"

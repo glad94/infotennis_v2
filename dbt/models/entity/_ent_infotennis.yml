@@ -69,3 +69,21 @@ models:
     tests:
       - unique:
           column_name: "year || '|' || tournament_id || '|' || match_id || '|' || point_id"
+
+  - name: fct_atp_court_vision
+    description: >
+      Entity fact table for point-level court vision data with per-stroke ball trajectory coordinates.
+      Explodes 1-row-per-point into 1-row-per-shot, pivots trajectory positions (hit, peak_before_net,
+      net, bounce, peak_after_net) to wide-format x/y/z columns. Includes match score state with
+      tiebreak detection (including NextGen Finals 3-3 rule). Uses NULL for missing values,
+      assigns ball_speed_kmh only on the serve stroke, and swaps x/y axes (y=0 at net).
+    columns:
+      - name: point_id
+        description: "Court vision point identifier"
+      - name: stroke_idx
+        description: "1-indexed stroke within the point (1=serve, 2=return, etc.)"
+      - name: is_tiebreak
+        description: "Whether the point was played during a tiebreak (1=yes, 0=no)"
+    tests:
+      - unique:
+          column_name: "year || '|' || tournament_id || '|' || match_id || '|' || point_id || '|' || coalesce(cast(stroke_idx as varchar), '0')"

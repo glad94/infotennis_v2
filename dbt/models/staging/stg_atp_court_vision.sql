@@ -120,6 +120,7 @@ parsed as (
         json_extract_string(pt, '$.a107') as a107,
         json_extract_string(pt, '$.a108') as a108,
         json_extract_string(pt, '$.a109') as a109,
+        json_extract_string(pt, '$.a149') as a149,
         -- File metadata
         meta_file_name,
         meta_file_modified

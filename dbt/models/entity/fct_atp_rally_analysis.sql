@@ -11,9 +11,19 @@
       - Deduplicates to the latest file version per match point.
 #}
 
+{{
+    config(
+        materialized='incremental',
+        unique_key=['year', 'tournament_id', 'match_id', 'point_id']
+    )
+}}
+
 with staging as (
 
     select * from {{ ref('stg_atp_rally_analysis') }}
+    {% if is_incremental() %}
+    where meta_file_modified > (select max(meta_file_modified) from {{ this }})
+    {% endif %}
 
 ),
 

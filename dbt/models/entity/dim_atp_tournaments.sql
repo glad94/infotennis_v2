@@ -83,6 +83,38 @@ final as (
         c.city,
         c.country,
         c.dates,
+
+        {#
+            Parse dates string into start_date and end_date.
+            Format examples:
+              "20 - 25 July, 2026"        (same month)
+              "23 February - 1 March, 2026" (cross month)
+
+            Strategy:
+              - Split on ' - ' to get [start_part, end_part_with_year]
+              - end_part always has "day month, year" → parse directly
+              - start_part is either "day" (same month) or "day month" (cross month)
+              - If start_part is numeric only, prepend the end month
+        #}
+        try_cast(strptime(
+            case
+                -- Cross-month: start_part has a month (contains a space)
+                when split_part(c.dates, ' - ', 1) like '% %'
+                then split_part(c.dates, ' - ', 1)
+                     || ', ' || cast(c.year as varchar)
+                -- Same-month: start_part is day only, use end month + year
+                else split_part(c.dates, ' - ', 1)
+                     || ' ' || regexp_extract(split_part(c.dates, ' - ', 2), '([A-Za-z]+)', 1)
+                     || ', ' || cast(c.year as varchar)
+            end,
+            '%d %B, %Y'
+        ) as date) as start_date,
+
+        try_cast(strptime(
+            split_part(c.dates, ' - ', 2),
+            '%d %B, %Y'
+        ) as date) as end_date,
+
         t.surface,
         t.indoor_outdoor,
         t.total_financial_commitment,

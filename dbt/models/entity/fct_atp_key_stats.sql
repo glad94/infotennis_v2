@@ -14,9 +14,9 @@ with staging as (
 
 parsed_ratios as (
     select
-        year, tournament_id, match_id, sets_completed, set_number,
-        player1_seed, player1_name, player1_first_name, player1_last_name, player1_id, player1_country,
-        player2_seed, player2_name, player2_first_name, player2_last_name, player2_id, player2_country,
+        year, tournament_id, upper(match_id) as match_id, sets_completed, set_number,
+        player1_seed, player1_name, player1_first_name, player1_last_name, upper(player1_id) as player1_id, upper(player1_country) as player1_country,
+        player2_seed, player2_name, player2_first_name, player2_last_name, upper(player2_id) as player2_id, upper(player2_country) as player2_country,
         meta_file_modified,
 
         try_cast(serve_rating_player1 as float) as serve_rating_player1,

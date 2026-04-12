@@ -38,7 +38,7 @@ enriched as (
         -- Match identification
         year,
         tournament_id,
-        match_id,
+        upper(match_id) as match_id,
         sets_completed,
 
         -- Shot number derived from shot_group name (mirrors Python numbering)
@@ -64,14 +64,14 @@ enriched as (
 
         -- Player ID: t1 outcomes → player1, t2 outcomes → player2
         case
-            when outcome_type like 't1%' then player1_id
-            else player2_id
+            when outcome_type like 't1%' then upper(player1_id)
+            else upper(player2_id)
         end as player_id,
 
         -- Opponent ID (inverse of player)
         case
-            when outcome_type like 't1%' then player2_id
-            else player1_id
+            when outcome_type like 't1%' then upper(player2_id)
+            else upper(player1_id)
         end as opponent_id,
 
         -- Point context

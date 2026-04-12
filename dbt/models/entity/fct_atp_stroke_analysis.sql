@@ -32,16 +32,16 @@ enriched as (
         -- Match identification
         year,
         tournament_id,
-        match_id,
+        upper(match_id) as match_id,
         sets_completed,
 
         -- Player info
-        player1_id,
+        upper(player1_id) as player1_id,
         player1_name,
-        player1_country,
-        player2_id,
+        upper(player1_country) as player1_country,
+        upper(player2_id) as player2_id,
         player2_name,
-        player2_country,
+        upper(player2_country) as player2_country,
 
         -- Point context
         point_id,

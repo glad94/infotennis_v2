@@ -4,9 +4,10 @@
 
     Sources:
       - stg_atp_tournament_results: match_id, round, players (id/name/seed/nation), score
-      - stg_atp_match_info:         winner, duration, umpire
-      - stg_atp_key_stats:          sets_completed (from set 1 only, since it's match-level)
+      - stg_atp_match_info:         winner, duration, umpire, court, number of sets, set scores
+      - stg_atp_key_stats:          sets_completed (from set 1, since it's match-level)
 
+    All ID and country columns are uppercased for consistency.
     Grain: one row per (year, tournament_id, match_id).
 #}
 
@@ -23,22 +24,22 @@ with results as (
         tournament_name,
         tournament_id,
         round,
-        match_id,
+        upper(match_id)    as match_id,
         player1_name,
-        player1_id,
+        upper(player1_id)  as player1_id,
         player1_seed,
-        player1_nation,
+        upper(player1_nation) as player1_nation,
         player2_name,
-        player2_id,
+        upper(player2_id)  as player2_id,
         player2_seed,
-        player2_nation,
-        score,
-        url,
+        upper(player2_nation) as player2_nation,
+        nullif(score, '')  as score,
+        nullif(url, '')    as url,
         meta_file_modified
     from {{ ref('stg_atp_tournament_results') }}
-    where match_id is not null
+    where nullif(match_id, '') is not null
     qualify row_number() over (
-        partition by year, tournament_id, match_id
+        partition by year, tournament_id, upper(match_id)
         order by meta_file_modified desc
     ) = 1
 
@@ -50,11 +51,26 @@ match_info as (
         year,
         tournament_id,
         match_id,
-        match_winner,
-        match_durationtotal      as duration_total,
-        match_durationinsidethelines as duration_inside_lines,
-        match_umpirefirstname || ' ' || match_umpirelastname as umpire,
-        match_courtid            as court_id,
+        court_name,
+        match_time,
+        match_time_total,
+        winner_id,
+        number_of_sets,
+        date_seq,
+        round_name,
+        match_status,
+        umpire_first_name,
+        umpire_last_name,
+        player1_id          as mi_player1_id,
+        player1_first_name  as mi_player1_first_name,
+        player1_last_name   as mi_player1_last_name,
+        player1_country_code as mi_player1_country_code,
+        player2_id          as mi_player2_id,
+        player2_first_name  as mi_player2_first_name,
+        player2_last_name   as mi_player2_last_name,
+        player2_country_code as mi_player2_country_code,
+        player1_set_scores_json,
+        player2_set_scores_json,
         meta_file_modified
     from {{ ref('stg_atp_match_info') }}
     where match_id is not null
@@ -72,13 +88,13 @@ key_stats_match as (
     select
         year,
         tournament_id,
-        match_id,
+        upper(match_id) as match_id,
         sets_completed,
         meta_file_modified
     from {{ ref('stg_atp_key_stats') }}
     where set_number = 1
     qualify row_number() over (
-        partition by year, tournament_id, match_id
+        partition by year, tournament_id, upper(match_id)
         order by meta_file_modified desc
     ) = 1
 
@@ -90,31 +106,42 @@ final as (
         r.year,
         r.tournament_name,
         r.tournament_id,
-        r.round,
+        coalesce(mi.round_name, r.round) as round,
         r.match_id,
 
         -- Player 1
-        r.player1_id,
+        coalesce(r.player1_id, mi.mi_player1_id) as player1_id,
         r.player1_name,
         r.player1_seed,
-        r.player1_nation,
+        coalesce(r.player1_nation, mi.mi_player1_country_code) as player1_nation,
 
         -- Player 2
-        r.player2_id,
+        coalesce(r.player2_id, mi.mi_player2_id) as player2_id,
         r.player2_name,
         r.player2_seed,
-        r.player2_nation,
+        coalesce(r.player2_nation, mi.mi_player2_country_code) as player2_nation,
 
         -- Result
         r.score,
-        mi.match_winner as winner_id,
+        mi.winner_id,
+        coalesce(mi.number_of_sets, ks.sets_completed) as number_of_sets,
         ks.sets_completed,
+        mi.match_status,
 
         -- Match context
-        mi.duration_total,
-        mi.duration_inside_lines,
-        mi.umpire,
-        mi.court_id,
+        mi.match_time,
+        mi.match_time_total,
+        mi.court_name,
+        mi.date_seq,
+        case
+            when mi.umpire_first_name is not null and mi.umpire_last_name is not null
+            then mi.umpire_first_name || ' ' || mi.umpire_last_name
+        end as umpire,
+
+        -- Set scores (raw JSON arrays for flexible downstream use)
+        mi.player1_set_scores_json,
+        mi.player2_set_scores_json,
+
         r.url
 
     from results r
